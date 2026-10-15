@@ -136,6 +136,18 @@ func run(_ command: CLICommand) -> Int32 {
             if log.events.isEmpty { out("  No history yet (the Keepwatch app records it).") }
         }
         return 0
+    case .apps(let json):
+        let apps = TopApps.current(limit: 15)
+        if json {
+            struct Row: Encodable { var name: String; var path: String; var bytes: UInt64; var processes: Int; var system: Bool }
+            out(jsonString(apps.map { Row(name: $0.name, path: $0.path, bytes: $0.bytes, processes: $0.pids.count, system: $0.isSystem) }))
+        } else {
+            for a in apps {
+                out(String(format: "%10@  %@%@", TopApps.describe(bytes: a.bytes), a.name,
+                           (a.pids.count > 1 ? " (\(a.pids.count) processes)" : "") + (a.isSystem ? "  macOS" : "")))
+            }
+        }
+        return 0
     case .security(let json):
         let checks = SecurityCheck.allCases.map { ($0, $0.read()) }
         if json {

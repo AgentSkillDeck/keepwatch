@@ -23,6 +23,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 - A notification tells you when an agent finishes.
 - It shows which other apps are also holding the Mac awake (Amphetamine, caffeinate, and so on).
 - Optional: **stop when unplugged**, and **stop at 15% battery** (on by default).
+- Optional: **stay awake automatically while plugged in**, or **while an external display is connected**.
 - **Shortcut ⌃⌥⌘K** turns keep-awake on or off from any app (no Accessibility permission needed).
 - **Screenshot (⌃⌥⌘S, or the menu button)** opens Apple's screenshot toolbar: an area, a window or the whole screen, as a picture or a video, with Markup to edit it. Apple's app does the capture, so Keepwatch needs no Screen Recording permission.
 
@@ -60,9 +61,11 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 
 **Dashboard**
 - A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security. Six to a row.
-- Tabs: Awake, Agents, Lid closed, Privacy, Security, Battery, Ports, Settings (⌘1–⌘8).
+- Tabs: Awake, Agents, Lid closed, Privacy, Security, Battery, Apps, Settings (⌘1–⌘8).
 - Battery charge, source, time left, **health** (% of original capacity), cycle count, Low Power Mode, thermal state and lid state.
+- **Apps using the most memory**, grouped by app (Chrome's helpers count as Chrome), with a confirmed **Quit** that works like ⌘Q. macOS's own processes can't be quit.
 - **Listening ports**: your processes listening on TCP ports, with a confirmed Stop. Stop is hidden for macOS's own processes.
+- **Battery health over time**: one reading a day, kept on this Mac.
 - Quick settings: Dock autohide, show hidden files, show all file extensions.
 - Open at login, plus a link to manage all login items.
 
@@ -79,6 +82,7 @@ keepwatch agents [--json]          # each session: agent, pid, folder, working o
 keepwatch agents stop PID          # quit one agent session
 keepwatch privacy [--json]         # mic and camera now, plus history
 keepwatch security [--json]        # firewall, FileVault, Gatekeeper, SIP, AirDrop
+keepwatch apps [--json]            # your apps by memory use
 keepwatch ports                    # what's listening on which port
 keepwatch lid start --hours 3      # asks the app; you type your password in the macOS prompt
 keepwatch lid end                  # end a lid session
@@ -110,7 +114,7 @@ Starting a lid session is deliberately **not** available by URL, so a web page c
 ## Build, sign, notarize
 
 ```sh
-swift test                      # 61 unit, shell-watchdog and live read-only tests
+swift test                      # 67 unit, shell-watchdog and live read-only tests
 scripts/build-app.sh            # dist/Keepwatch.app (universal)
 scripts/sign.sh                 # Developer ID + hardened runtime + timestamp
 # one-time: store notarization credentials in your keychain

@@ -22,6 +22,8 @@ public enum CLICommand: Equatable, Sendable {
     /// Stop one agent session by pid (only if that pid is an agent).
     case agentStop(pid: Int32)
     case privacy(json: Bool)
+    /// Your apps by memory use.
+    case apps(json: Bool)
     case security(json: Bool)
     case help
     case version
@@ -63,6 +65,7 @@ public enum CLICommand: Equatable, Sendable {
       keepwatch agents [--json]          agent sessions: agent, pid, folder, working or idle
       keepwatch agents stop PID          quit one agent session
       keepwatch privacy [--json]         mic and camera now, plus recent history
+      keepwatch apps [--json]            your apps by memory use (quit them from the app)
       keepwatch security [--json]        firewall, FileVault, Gatekeeper, SIP, AirDrop
       keepwatch ports [--json]           your processes listening on TCP ports
       keepwatch version
@@ -87,6 +90,7 @@ public enum CLICommand: Equatable, Sendable {
         case "status": return .status(json: try json())
         case "ports": return .ports(json: try json())
         case "privacy": return .privacy(json: try json())
+        case "apps": return .apps(json: try json())
         case "security": return .security(json: try json())
         case "agents":
             if rest.first == "stop" {

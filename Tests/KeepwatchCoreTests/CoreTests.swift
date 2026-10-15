@@ -359,6 +359,8 @@ final class CLICommandTests: XCTestCase {
         XCTAssertEqual(try p("agents stop 4242"), .agentStop(pid: 4242))
         XCTAssertEqual(try p("privacy"), .privacy(json: false))
         XCTAssertEqual(try p("security --json"), .security(json: true))
+        XCTAssertEqual(try p("apps"), .apps(json: false))
+        XCTAssertEqual(try p("apps --json"), .apps(json: true))
         XCTAssertEqual(try p("lid start"), .lidStart(hours: nil))
         XCTAssertEqual(try p("lid start --hours 2.7"), .lidStart(hours: 2.5))
     }
