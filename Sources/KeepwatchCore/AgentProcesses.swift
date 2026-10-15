@@ -33,10 +33,11 @@ public struct AgentMatcher: Sendable {
         "crush": "Crush",
     ]
 
-    /// Argument markers of idle helper processes that are not a working
-    /// session: Claude Code keeps a pre-warmed "spare" process (and a pty host
-    /// serving it) alive between sessions.
-    public static let idleHelperMarkers = ["--bg-spare", "/spare/"]
+    /// Argument markers of helper processes that are not a session of their
+    /// own: Claude Code keeps a pre-warmed "spare" process alive between
+    /// sessions, and runs each background session inside a pty host whose
+    /// child is the real session (counted on its own).
+    public static let idleHelperMarkers = ["--bg-spare", "/spare/", "--bg-pty-host"]
     /// First-argument subcommands of long-lived supervisors that outlive any
     /// session (`claude daemon run`), so they must never keep the Mac awake.
     public static let supervisorSubcommands: Set<String> = ["daemon"]
@@ -65,6 +66,18 @@ public struct AgentMatcher: Sendable {
             if let agent = agentName(for: p) { counts[agent, default: 0] += 1 }
         }
         return counts
+    }
+}
+
+extension Dictionary where Key == String, Value == Int {
+    /// Total sessions across all agents, and a label such as "Claude Code ×2, Codex".
+    public var sessionCount: Int { values.reduce(0) { $0 &+ Swift.max(0, $1) } }
+
+    public var sessionSummary: String {
+        keys.sorted().map { name in
+            let n = self[name] ?? 0
+            return n > 1 ? "\(name) ×\(n)" : name
+        }.joined(separator: ", ")
     }
 }
 

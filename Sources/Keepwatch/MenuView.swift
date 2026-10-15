@@ -101,7 +101,7 @@ struct StatusHeader: View {
             if Calendar.current.isDateInTomorrow(end) { return "Until \(time) tomorrow" }
             return "Until " + end.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
         case .indefinite: return "Until you turn it off"
-        case .whileAgentsRun: return "While " + model.agents.keys.sorted().joined(separator: ", ") + " runs"
+        case .whileAgentsRun: return "While " + model.agents.sessionSummary + " runs"
         case .off: return ""
         }
     }
@@ -322,7 +322,7 @@ struct AwakeControls: View {
 
     private var agentLine: String {
         if model.agents.isEmpty { return "Claude Code, Codex, Gemini CLI… none running" }
-        return "Running: " + model.agents.keys.sorted().joined(separator: ", ")
+        return "Running: " + model.agents.sessionSummary
     }
 }
 

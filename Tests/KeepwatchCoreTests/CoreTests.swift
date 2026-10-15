@@ -237,6 +237,21 @@ final class AgentHelperTests: XCTestCase {
         XCTAssertEqual(m.runningAgents(in: procs + [RunningProcess(pid: 3, name: "claude")]), ["Claude Code": 1])
     }
 
+    func testBackgroundSessionPtyHostCountsOnce() {
+        let m = AgentMatcher()
+        let procs = [
+            RunningProcess(pid: 10, name: "claude", arguments: ["--bg-pty-host", "/tmp/cc-daemon-502/x/pty/s.sock", "--", "/opt/claude"]),
+            RunningProcess(pid: 11, name: "claude", arguments: ["--session-id", "s", "--agent", "claude"]),
+            RunningProcess(pid: 12, name: "claude"),
+            RunningProcess(pid: 13, name: "codex"),
+        ]
+        let running = m.runningAgents(in: procs)
+        XCTAssertEqual(running, ["Claude Code": 2, "Codex": 1])
+        XCTAssertEqual(running.sessionCount, 3)
+        XCTAssertEqual(running.sessionSummary, "Claude Code ×2, Codex")
+        XCTAssertEqual([String: Int]().sessionCount, 0)
+    }
+
     func testReadsOwnArguments() {
         let args = ProcessList.arguments(of: getpid())
         XCTAssertEqual(args, Array(CommandLine.arguments.dropFirst()))

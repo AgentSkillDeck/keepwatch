@@ -85,7 +85,10 @@ final class AppModel: ObservableObject {
         lidSleepAt = defaults.object(forKey: "lidSleepAt") as? Date
             ?? LidSessionPlan.nextTime(hour: 1, minute: 0, after: Date()) ?? Date()
         alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
-        let savedTiles = (UserDefaults.standard.stringArray(forKey: "summaryTiles") ?? []).compactMap(SummaryTile.init(rawValue:))
+        // "micCamera" was one tile before 0.2; it is now two.
+        let savedTiles = (UserDefaults.standard.stringArray(forKey: "summaryTiles") ?? [])
+            .flatMap { $0 == "micCamera" ? ["mic", "camera"] : [$0] }
+            .compactMap(SummaryTile.init(rawValue:))
         summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
         customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
         customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours

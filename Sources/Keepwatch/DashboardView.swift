@@ -174,8 +174,8 @@ struct CameraResetRow: View {
 
 /// Things the summary can show. People pick up to six.
 enum SummaryTile: String, CaseIterable, Identifiable {
-    case battery, health, agents, micCamera, thermal, cycles, timeLeft, ports, security
-    static let defaults: [SummaryTile] = [.battery, .health, .agents, .micCamera]
+    case battery, health, agents, mic, camera, thermal, cycles, timeLeft, ports, security
+    static let defaults: [SummaryTile] = [.battery, .health, .agents, .mic, .camera]
     static let maxShown = 6
     var id: String { rawValue }
 
@@ -184,7 +184,8 @@ enum SummaryTile: String, CaseIterable, Identifiable {
         case .battery: "Battery charge"
         case .health: "Battery health"
         case .agents: "Agents running"
-        case .micCamera: "Mic & camera"
+        case .mic: "Microphone"
+        case .camera: "Camera"
         case .thermal: "Temperature"
         case .cycles: "Charge cycles"
         case .timeLeft: "Battery time left"
@@ -237,11 +238,18 @@ struct SummaryHeader: View {
         case .health:
             StatTile(value: p?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
         case .agents:
-            StatTile(value: String(model.agents.count), caption: model.agents.count == 1 ? "Agent running" : "Agents running",
+            let n = model.agents.sessionCount
+            StatTile(value: String(n),
+                     caption: n == 0 ? "Agents running" : (model.agents.count == 1 ? "\(model.agents.keys.first ?? "Agent") session\(n == 1 ? "" : "s")" : "Agent sessions"),
                      icon: "terminal.fill")
-        case .micCamera:
-            let live = model.privacy.micInUse || model.privacy.cameraInUse
-            StatTile(value: live ? "Live" : "Off", caption: "Mic & camera", icon: "video.fill",
+        case .mic:
+            let live = model.privacy.micInUse
+            StatTile(value: model.privacy.micMuted == true ? "Muted" : (live ? "Live" : "Idle"),
+                     caption: "Microphone", icon: live ? "mic.fill" : (model.privacy.micMuted == true ? "mic.slash.fill" : "mic"),
+                     tint: live ? Brand.live : Brand.teal)
+        case .camera:
+            let live = model.privacy.cameraInUse
+            StatTile(value: live ? "Live" : "Off", caption: "Camera", icon: live ? "video.fill" : "video.slash",
                      tint: live ? Brand.live : Brand.teal)
         case .thermal:
             let hot = p.map { $0.thermal == .serious || $0.thermal == .critical } ?? false
