@@ -1,0 +1,16 @@
+name: ci
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: swift --version
+      - run: swift build
+      - run: swift test
+      - name: Build the app bundle (unsigned)
+        run: scripts/build-app.sh --arm64-only
