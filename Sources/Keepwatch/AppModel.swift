@@ -41,6 +41,10 @@ final class AppModel: ObservableObject {
     @Published var lidAllowBattery: Bool { didSet { defaults.set(lidAllowBattery, forKey: "lidBattery") } }
     @Published var lidSleepAtEnabled: Bool { didSet { defaults.set(lidSleepAtEnabled, forKey: "lidSleepAtOn") } }
     @Published var lidSleepAt: Date { didSet { defaults.set(lidSleepAt, forKey: "lidSleepAt") } }
+    /// Which tiles the dashboard summary shows, in order.
+    @Published var summaryTiles: [SummaryTile] {
+        didSet { defaults.set(summaryTiles.map(\.rawValue), forKey: "summaryTiles") }
+    }
     /// The last custom keep-awake length, so "Custom" opens where you left it.
     /// Notify when the mic or camera turns on.
     @Published var alertOnMicCamera: Bool { didSet { defaults.set(alertOnMicCamera, forKey: "alertMicCamera") } }
@@ -81,6 +85,8 @@ final class AppModel: ObservableObject {
         lidSleepAt = defaults.object(forKey: "lidSleepAt") as? Date
             ?? LidSessionPlan.nextTime(hour: 1, minute: 0, after: Date()) ?? Date()
         alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
+        let savedTiles = (UserDefaults.standard.stringArray(forKey: "summaryTiles") ?? []).compactMap(SummaryTile.init(rawValue:))
+        summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
         customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
         customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours
         lidIntent = (defaults.data(forKey: "lidIntent")).flatMap { try? JSONDecoder().decode(LidModeIntent.self, from: $0) } ?? .off
@@ -207,7 +213,8 @@ final class AppModel: ObservableObject {
             notify("Microphone turned on", who.isEmpty ? "An app started using your microphone." : "In use by \(who).")
         }
         if privacy.cameraInUse && !before.cameraInUse {
-            notify("Camera turned on", "An app started using your camera.")
+            notify("Camera turned on", "An app started using your camera. Not you? Open the Camera list to remove its access.",
+                   category: AppModel.cameraCategory)
         }
     }
 
@@ -231,6 +238,26 @@ final class AppModel: ObservableObject {
 
     func open(_ check: SecurityCheck) {
         if let url = check.settingsURL { NSWorkspace.shared.open(url) }
+    }
+
+    nonisolated static let cameraCategory = "camera-on"
+    nonisolated static let openCameraAction = "open-camera-settings"
+
+    /// Takes camera permission back from every app (`tccutil reset Camera`), so
+    /// each one has to ask again. Apps already open keep access until they quit.
+    func resetCameraPermissions() {
+        let ok = (SystemState.run("/usr/bin/tccutil", ["reset", "Camera"]) ?? "").contains("Successfully")
+        notify(ok ? "Camera access reset" : "Couldn't reset camera access",
+               ok ? "Every app now has to ask before using the camera. Apps that are open keep access until you quit them."
+                  : "Open the Camera list in System Settings to remove apps by hand.")
+    }
+
+    func toggleTile(_ tile: SummaryTile) {
+        if let i = summaryTiles.firstIndex(of: tile) {
+            if summaryTiles.count > 1 { summaryTiles.remove(at: i) }
+        } else if summaryTiles.count < SummaryTile.maxShown {
+            summaryTiles.append(tile)
+        }
     }
 
     func setMicMuted(_ muted: Bool) {
@@ -451,13 +478,14 @@ final class AppModel: ObservableObject {
 
     private var notificationsAsked = false
 
-    private func notify(_ title: String, _ body: String) {
+    private func notify(_ title: String, _ body: String, category: String? = nil) {
         guard Bundle.main.bundleIdentifier != nil else { return } // not running from an .app
         let center = UNUserNotificationCenter.current()
         let send = {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
+            if let category { content.categoryIdentifier = category }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
         if notificationsAsked { send(); return }
