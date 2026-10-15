@@ -172,11 +172,12 @@ struct CameraResetRow: View {
     }
 }
 
-/// Things the summary can show. People pick up to six.
+/// Things the summary can show: any number, six to a row.
 enum SummaryTile: String, CaseIterable, Identifiable {
     case battery, health, agents, mic, camera, thermal, cycles, timeLeft, ports, security
     static let defaults: [SummaryTile] = [.battery, .health, .agents, .mic, .camera]
-    static let maxShown = 6
+    static let maxShown = SummaryTile.allCases.count
+    static let perRow = 6
     var id: String { rawValue }
 
     var title: String {
@@ -209,16 +210,19 @@ struct SummaryHeader: View {
                                                          set: { _ in model.toggleTile(tile) }))
                     }
                     Divider()
+                    Button("Show all") { model.summaryTiles = SummaryTile.allCases }
                     Button("Reset to default") { model.summaryTiles = SummaryTile.defaults }
                 } label: {
                     Label("Customize", systemImage: "square.grid.2x2")
                 }
                 .menuStyle(.borderlessButton)
                 .fixedSize()
-                .help("Choose what the summary shows (up to \(SummaryTile.maxShown))")
+                .help("Choose what the summary shows; more than six makes a second row")
             }
-            HStack(spacing: 10) {
-                ForEach(model.summaryTiles) { tileView($0) }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
+                                     count: min(SummaryTile.perRow, max(1, model.summaryTiles.count))),
+                      spacing: 10) {
+                ForEach(model.summaryTiles) { tileView($0).frame(height: 96) }
             }
         }
         .padding(18)
@@ -248,7 +252,7 @@ struct SummaryHeader: View {
                 Text(String(n)).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
                 Text(n == 1 ? "Agent session" : "Agent sessions").font(.caption).foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(12)
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         case .mic:

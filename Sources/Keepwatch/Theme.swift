@@ -157,7 +157,7 @@ struct StatTile: View {
                 .lineLimit(1).minimumScaleFactor(0.7)
             Text(caption).font(.caption).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(12)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
