@@ -3,9 +3,10 @@ import Foundation
 /// The `keepwatch` command line, parsed. Parsing is pure and tested; the
 /// KeepwatchCLI target executes it.
 ///
-/// Agents can keep the Mac awake, read status and end a lid session. They can
-/// not start a lid session: that needs an administrator password, and only a
-/// person at the Mac may give it.
+/// Agents can keep the Mac awake, read status, list and stop agent sessions,
+/// and end a lid session. `lid start` only asks the running app to start one:
+/// macOS then asks the person at the Mac for their password, so an agent can
+/// request a lid session but never grant it. It is never reachable by URL.
 public enum CLICommand: Equatable, Sendable {
     case status(json: Bool)
     /// Keep awake for N minutes / indefinitely / while agents run, or stop.
@@ -14,7 +15,16 @@ public enum CLICommand: Equatable, Sendable {
     case run(command: [String], display: Bool)
     case mic(mute: Bool)
     case lidEnd
+    /// Ask the app to start a lid session; macOS asks the user for their password.
+    case lidStart(hours: Double?)
     case ports(json: Bool)
+    case agents(json: Bool)
+    /// Stop one agent session by pid (only if that pid is an agent).
+    case agentStop(pid: Int32)
+    case privacy(json: Bool)
+    /// Your apps by memory use.
+    case apps(json: Bool)
+    case security(json: Bool)
     case help
     case version
 
@@ -42,23 +52,32 @@ public enum CLICommand: Equatable, Sendable {
 
     USAGE
       keepwatch status [--json]          power, sleep blockers, agents, mic/camera, lid session
-      keepwatch awake [--minutes N]      keep awake N minutes (max 1440), or until 'awake --off'
+      keepwatch awake                    keep awake until 'awake --off'
+      keepwatch awake --for 3h           keep awake for 45m, 3h, 1h30m, 2d, 1w… (max 30 days)
+      keepwatch awake --until 18:30      keep awake until a time (today, or tomorrow if it has passed)
+      keepwatch awake --minutes N        same as --for Nm
       keepwatch awake --agents           keep awake while agent CLIs (Claude Code, Codex…) run
       keepwatch awake --off              stop keeping awake
       keepwatch run [--display] -- CMD…  keep awake while CMD runs; exits with CMD's status
       keepwatch mic mute|unmute          soft-mute the default microphone
+      keepwatch lid start [--hours N]    ask the app to start a lid-closed session (you type your password)
       keepwatch lid end                  end a lid-closed session (turns sleep back on)
+      keepwatch agents [--json]          agent sessions: agent, pid, folder, working or idle
+      keepwatch agents stop PID          quit one agent session
+      keepwatch privacy [--json]         mic and camera now, plus recent history
+      keepwatch apps [--json]            your apps by memory use (quit them from the app)
+      keepwatch security [--json]        firewall, FileVault, Gatekeeper, SIP, AirDrop
       keepwatch ports [--json]           your processes listening on TCP ports
       keepwatch version
 
     'awake' drives the Keepwatch app when it is running. Without the app it holds
     the Mac awake itself and keeps running until the time is up or you press Ctrl-C.
-    Lid-closed sessions can only be started from the app (they need your password).
+    Lid sessions start only after you type your password in the macOS prompt.
 
     EXIT CODES  0 ok · 1 usage error · 2 system error · otherwise CMD's status for 'run'
     """
 
-    public static func parse(_ args: [String]) throws -> CLICommand {
+    public static func parse(_ args: [String], now: Date = Date(), calendar: Calendar = .current) throws -> CLICommand {
         guard let first = args.first else { return .help }
         let rest = Array(args.dropFirst())
         func json() throws -> Bool {
@@ -70,6 +89,15 @@ public enum CLICommand: Equatable, Sendable {
         case "version", "--version": return .version
         case "status": return .status(json: try json())
         case "ports": return .ports(json: try json())
+        case "privacy": return .privacy(json: try json())
+        case "apps": return .apps(json: try json())
+        case "security": return .security(json: try json())
+        case "agents":
+            if rest.first == "stop" {
+                guard rest.count == 2, let pid = Int32(rest[1]), pid > 1 else { throw ParseError.bad("usage: keepwatch agents stop PID") }
+                return .agentStop(pid: pid)
+            }
+            return .agents(json: try json())
         case "awake":
             switch rest {
             case []: return .awake(.indefinitely)
@@ -78,7 +106,17 @@ public enum CLICommand: Equatable, Sendable {
             case _ where rest.count == 2 && rest[0] == "--minutes":
                 guard let m = Int(rest[1]), m > 0 else { throw ParseError.bad("--minutes needs a positive whole number") }
                 return .awake(.minutes(min(m, URLCommand.maxMinutes)))
-            default: throw ParseError.bad("usage: keepwatch awake [--minutes N | --agents | --off]")
+            case _ where rest.count >= 2 && rest[0] == "--for":
+                guard let s = AwakeDuration.parse(rest.dropFirst().joined(separator: " ")) else {
+                    throw ParseError.bad("--for needs a length like 45m, 3h, 1h30m, 2d or 1w")
+                }
+                return .awake(.minutes(AwakeDuration.minutes(s)))
+            case _ where rest.count == 2 && rest[0] == "--until":
+                guard let end = AwakeDuration.nextOccurrence(of: rest[1], after: now, calendar: calendar) else {
+                    throw ParseError.bad("--until needs a time like 18:30")
+                }
+                return .awake(.minutes(AwakeDuration.minutes(end.timeIntervalSince(now))))
+            default: throw ParseError.bad("usage: keepwatch awake [--for 3h | --until 18:30 | --minutes N | --agents | --off]")
             }
         case "run":
             var display = false
@@ -99,10 +137,14 @@ public enum CLICommand: Equatable, Sendable {
             }
         case "lid":
             if rest == ["end"] { return .lidEnd }
-            if rest.first == "start" {
-                throw ParseError.bad("lid sessions can only be started from the Keepwatch app, because they need your administrator password")
+            if rest == ["start"] { return .lidStart(hours: nil) }
+            if rest.count == 3, rest[0] == "start", rest[1] == "--hours" {
+                guard let h = Double(rest[2]), h.isFinite, h > 0, h <= 12 else {
+                    throw ParseError.bad("--hours needs a number from 0.5 to 12")
+                }
+                return .lidStart(hours: (h * 2).rounded() / 2)
             }
-            throw ParseError.bad("usage: keepwatch lid end")
+            throw ParseError.bad("usage: keepwatch lid start [--hours N] | keepwatch lid end")
         default:
             throw ParseError.unknownCommand(first)
         }

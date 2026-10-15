@@ -15,8 +15,19 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var mode: KeepAwakeMode = .off
     @Published private(set) var remaining: TimeInterval?
+    /// Full length of the current timed session, for the progress ring. Nil if
+    /// unknown (a session restored from before a relaunch).
+    @Published private(set) var timedLength: TimeInterval?
     @Published private(set) var holding = false
     @Published private(set) var agents: [String: Int] = [:]
+    @Published private(set) var agentSessions: [AgentSession] = []
+    @Published private(set) var agentActivity: [Int32: AgentActivity] = [:]
+    @Published private(set) var load = SystemLoad(cpuPercent: nil, memoryPercent: nil)
+    @Published private(set) var privacyLog = PrivacyLog.load()
+    @Published private(set) var batteryHistory = BatteryHistory.load()
+    @Published private(set) var topApps: [AppUsage] = []
+    /// Why Keepwatch is holding the Mac awake on its own (plugged in, external display), if it is.
+    @Published private(set) var autoReason: String?
     @Published private(set) var privacy = PrivacySnapshot.idle
     @Published private(set) var power: PowerState?
     @Published private(set) var pmset: PMSet.Settings?
@@ -25,6 +36,7 @@ final class AppModel: ObservableObject {
     @Published var banner: Banner?
     @Published private(set) var toggles: [QuickToggle: Bool] = [:]
     @Published private(set) var ports: [ListeningPort] = []
+    @Published private(set) var security: [SecurityCheck: SecurityState] = [:]
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     // MARK: Preferences
@@ -37,6 +49,28 @@ final class AppModel: ObservableObject {
     @Published var lidAllowBattery: Bool { didSet { defaults.set(lidAllowBattery, forKey: "lidBattery") } }
     @Published var lidSleepAtEnabled: Bool { didSet { defaults.set(lidSleepAtEnabled, forKey: "lidSleepAtOn") } }
     @Published var lidSleepAt: Date { didSet { defaults.set(lidSleepAt, forKey: "lidSleepAt") } }
+    /// Which tiles the dashboard summary shows, in order.
+    @Published var summaryTiles: [SummaryTile] {
+        didSet { defaults.set(summaryTiles.map(\.rawValue), forKey: "summaryTiles") }
+    }
+    /// The last custom keep-awake length, so "Custom" opens where you left it.
+    /// Notify when an agent goes quiet after working (done, or waiting for you).
+    @Published var notifyAgentWaiting: Bool { didSet { defaults.set(notifyAgentWaiting, forKey: "notifyAgentWaiting") } }
+    /// Stop an ordinary keep-awake when unplugged.
+    @Published var stopAwakeOnBattery: Bool { didSet { defaults.set(stopAwakeOnBattery, forKey: "stopAwakeOnBattery") } }
+    /// Stop an ordinary keep-awake at low battery.
+    @Published var stopAwakeOnLowBattery: Bool { didSet { defaults.set(stopAwakeOnLowBattery, forKey: "stopAwakeLow") } }
+    /// Keep awake automatically while plugged in / while an external display is connected.
+    @Published var autoWhilePlugged: Bool { didSet { defaults.set(autoWhilePlugged, forKey: "autoPlugged"); tick() } }
+    @Published var autoWhileDisplay: Bool { didSet { defaults.set(autoWhileDisplay, forKey: "autoDisplay"); tick() } }
+    /// Play a sound with Keepwatch's notifications.
+    @Published var notificationSound: Bool { didSet { defaults.set(notificationSound, forKey: "sound") } }
+    /// ⌃⌥⌘K starts or stops keep-awake from anywhere.
+    @Published var hotkeyEnabled: Bool { didSet { defaults.set(hotkeyEnabled, forKey: "hotkey"); Hotkey.shared.setEnabled(hotkeyEnabled) } }
+    /// Notify when the mic or camera turns on.
+    @Published var alertOnMicCamera: Bool { didSet { defaults.set(alertOnMicCamera, forKey: "alertMicCamera") } }
+    @Published var customAmount: Double { didSet { defaults.set(customAmount, forKey: "customAmount") } }
+    @Published var customUnit: AwakeDuration.Unit { didSet { defaults.set(customUnit.rawValue, forKey: "customUnit") } }
 
     struct Banner: Identifiable, Equatable {
         let id = UUID()
@@ -55,6 +89,8 @@ final class AppModel: ObservableObject {
     private var displayAssertion = PowerAssertion(kind: .display, name: "Keepwatch: keeping the display on")
     private var timer: Timer?
     private var tickCount = 0
+    private var activityTracker = AgentActivityTracker()
+    private var loadSampler = SystemLoadSampler()
     private var lastLidClosed: Bool?
     private var mutedByLid = false
     private let policy = LidModePolicy()
@@ -67,10 +103,25 @@ final class AppModel: ObservableObject {
         muteMicWhenLidCloses = defaults.bool(forKey: "muteOnLid")
         endLidSessionWhenAgentsFinish = defaults.object(forKey: "lidEndsWithAgents") as? Bool ?? true
         lidHours = defaults.object(forKey: "lidHours") as? Double ?? 3
-        lidAllowBattery = defaults.bool(forKey: "lidBattery")
+        lidAllowBattery = defaults.object(forKey: "lidBattery") as? Bool ?? true // on battery above 20% by default
         lidSleepAtEnabled = defaults.bool(forKey: "lidSleepAtOn")
         lidSleepAt = defaults.object(forKey: "lidSleepAt") as? Date
             ?? LidSessionPlan.nextTime(hour: 1, minute: 0, after: Date()) ?? Date()
+        notifyAgentWaiting = defaults.object(forKey: "notifyAgentWaiting") as? Bool ?? true
+        stopAwakeOnBattery = defaults.bool(forKey: "stopAwakeOnBattery")
+        stopAwakeOnLowBattery = defaults.object(forKey: "stopAwakeLow") as? Bool ?? true
+        hotkeyEnabled = defaults.object(forKey: "hotkey") as? Bool ?? true
+        autoWhilePlugged = defaults.bool(forKey: "autoPlugged")
+        autoWhileDisplay = defaults.bool(forKey: "autoDisplay")
+        notificationSound = defaults.object(forKey: "sound") as? Bool ?? true
+        alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
+        // "micCamera" was one tile before 0.2; it is now two.
+        let savedTiles = (UserDefaults.standard.stringArray(forKey: "summaryTiles") ?? [])
+            .flatMap { $0 == "micCamera" ? ["mic", "camera"] : [$0] }
+            .compactMap(SummaryTile.init(rawValue:))
+        summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
+        customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
+        customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours
         lidIntent = (defaults.data(forKey: "lidIntent")).flatMap { try? JSONDecoder().decode(LidModeIntent.self, from: $0) } ?? .off
         if let data = defaults.data(forKey: "mode"), let saved = try? JSONDecoder().decode(KeepAwakeMode.self, from: data) {
             // A timer that ran out while we were closed comes back as off.
@@ -78,6 +129,12 @@ final class AppModel: ObservableObject {
         }
         mode = engine.mode
         refreshSlow()
+        Hotkey.shared.setEnabled(hotkeyEnabled)
+        DistributedNotificationCenter.default().addObserver(forName: Notification.Name(LidRequest.notificationName),
+                                                            object: nil, queue: .main) { note in
+            let hours = LidRequest.hours(from: note.userInfo)
+            Task { @MainActor in AppModel.shared.handleLidRequest(hours: hours) }
+        }
         checkLidSessionOnLaunch()
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
@@ -88,13 +145,41 @@ final class AppModel: ObservableObject {
     // MARK: Keep awake
 
     func setMode(_ newMode: KeepAwakeMode) {
+        if case .until(let end) = newMode { timedLength = end.timeIntervalSinceNow } else { timedLength = nil }
         engine.set(newMode)
         mode = engine.mode
         if let data = try? JSONEncoder().encode(newMode) { defaults.set(data, forKey: "mode") }
         tick()
     }
 
-    func keepAwake(for seconds: TimeInterval) { setMode(.until(Date().addingTimeInterval(seconds))) }
+    func keepAwake(for seconds: TimeInterval) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        setMode(.until(Date().addingTimeInterval(min(seconds, AwakeDuration.maxSeconds))))
+    }
+
+    /// Keep awake for the custom amount and unit chosen in the menu.
+    func keepAwakeCustom() {
+        if let seconds = AwakeDuration.seconds(customAmount, customUnit) { keepAwake(for: seconds) }
+    }
+
+    /// Keep awake until a clock time (today, or tomorrow if it has passed).
+    func keepAwake(until date: Date) {
+        let now = Date()
+        var end = date
+        if end <= now {
+            let hm = Calendar.current.dateComponents([.hour, .minute], from: date)
+            guard let next = Calendar.current.nextDate(after: now, matching: DateComponents(hour: hm.hour, minute: hm.minute, second: 0),
+                                                       matchingPolicy: .nextTime) else { return }
+            end = next
+        }
+        keepAwake(for: end.timeIntervalSince(now))
+    }
+
+    /// The preset length the current timed session was started with, if any.
+    var timedPreset: TimeInterval? {
+        guard case .until = mode, let timedLength else { return nil }
+        return timedLength
+    }
 
     private func apply() {
         if holding {
@@ -109,22 +194,41 @@ final class AppModel: ObservableObject {
     func tick() {
         tickCount += 1
         let now = Date()
-        agents = matcher.runningAgents(in: ProcessList.snapshot(wantArguments: matcher.isCandidate))
+        let processes = ProcessList.snapshot(wantArguments: matcher.isCandidate)
+        let running = matcher.runningAgents(in: processes)
+        if running != agents { agents = running }
+        let sessions = matcher.sessions(in: processes)
+        if sessions != agentSessions { agentSessions = sessions }
+        trackAgentActivity(now: now)
         let decision = engine.tick(now: now, agents: Set(agents.keys))
-        mode = engine.mode
-        remaining = decision.remaining
-        holding = decision.holdAssertion
+        if engine.mode != mode { mode = engine.mode }
+        if decision.remaining != remaining { remaining = decision.remaining }
+        let auto = AutoAwake(whilePluggedIn: autoWhilePlugged, whileExternalDisplay: autoWhileDisplay)
+            .reason(onBattery: power?.onBattery, screens: NSScreen.screens.count)
+        if auto != autoReason { autoReason = auto }
+        let hold = decision.holdAssertion || auto != nil
+        if hold != holding { holding = hold }
         apply()
         for event in decision.events { handle(event) }
 
-        privacy = PrivacyMonitor.snapshot()
+        guardKeepAwake()
+        let l = loadSampler.sample()
+        if l != load { load = l }
+
+        let before = privacy
+        let snap = PrivacyMonitor.snapshot()
+        if snap != privacy { privacy = snap }
+        if tickCount > 1 { alertIfPrivacyChanged(from: before) }
         if tickCount % 5 == 1 { refreshSlow() }
+        if tickCount % 30 == 1 { refreshSecurity() }
         handleLidTransition()
         superviseLidSession(now: now)
     }
 
     private func refreshSlow() {
-        power = SystemState.power()
+        let p = SystemState.power()
+        if p != power { power = p }
+        if batteryHistory.record(health: p.healthPercent, cycles: p.cycleCount, on: Date()) { batteryHistory.save() }
         pmset = SystemState.pmsetSettings()
         for t in QuickToggle.allCases where toggles[t] == nil { toggles[t] = t.read() }
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -155,7 +259,115 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Mic
+    // MARK: Mic, camera and security
+
+    private func alertIfPrivacyChanged(from before: PrivacySnapshot) {
+        logPrivacyChanges(from: before)
+        guard alertOnMicCamera else { return }
+        if privacy.micInUse && !before.micInUse {
+            let who = privacy.micUsers.map { appName(for: $0) }.joined(separator: ", ")
+            notify("Microphone turned on", who.isEmpty ? "An app started using your microphone." : "In use by \(who).")
+        }
+        if privacy.cameraInUse && !before.cameraInUse {
+            notify("Camera turned on", "An app started using your camera. Not you? Open the Camera list to remove its access.",
+                   category: AppModel.cameraCategory)
+        }
+    }
+
+    private func logPrivacyChanges(from before: PrivacySnapshot) {
+        var changed = false
+        if privacy.micInUse != before.micInUse {
+            privacyLog.record(PrivacyEvent(date: Date(), device: .mic, on: privacy.micInUse,
+                                           apps: privacy.micUsers.map { appName(for: $0) }))
+            changed = true
+        }
+        if privacy.cameraInUse != before.cameraInUse {
+            privacyLog.record(PrivacyEvent(date: Date(), device: .camera, on: privacy.cameraInUse))
+            changed = true
+        }
+        if changed { privacyLog.save() }
+    }
+
+    func clearPrivacyLog() {
+        privacyLog.clear()
+        privacyLog.save()
+    }
+
+    // MARK: Agent activity and battery guard
+
+    private func trackAgentActivity(now: Date) {
+        var cpu: [Int32: TimeInterval] = [:]
+        for s in agentSessions { if let t = ProcessList.cpuSeconds(of: s.pid) { cpu[s.pid] = t } }
+        let quiet = activityTracker.update(cpu: cpu, now: now)
+        let states = activityTracker.states.mapValues(\.activity)
+        if states != agentActivity { agentActivity = states }
+        guard notifyAgentWaiting else { return }
+        for pid in quiet {
+            guard let s = agentSessions.first(where: { $0.pid == pid }) else { continue }
+            notify("\(s.agent) went quiet", "In \(s.folderName ?? "a session"). It may be done, or waiting for you.")
+        }
+    }
+
+    private func guardKeepAwake() {
+        guard mode != .off, !lidIntent.enabled, let p = power else { return }
+        let g = KeepAwakeGuard(stopOnBattery: stopAwakeOnBattery, stopBelowPercent: stopAwakeOnLowBattery ? 15 : 0)
+        guard let why = g.reason(onBattery: p.onBattery, batteryPercent: p.batteryPercent) else { return }
+        setMode(.off)
+        notify("Keep-awake stopped", "Because \(why). Your Mac can sleep normally.")
+    }
+
+    /// The ⌃⌥⌘K shortcut: keep awake until turned off, or stop.
+    func toggleFromHotkey() {
+        setMode(mode == .off ? .indefinite : .off)
+        notify(mode == .off ? "Keep-awake off" : "Keeping your Mac awake", mode == .off ? "Your Mac sleeps as usual." : "Until you press ⌃⌥⌘K again.")
+    }
+
+    /// Reads the security checks off the main thread; each one runs a small system tool.
+    func refreshSecurity() {
+        Task.detached(priority: .utility) { [weak self] in
+            var states: [SecurityCheck: SecurityState] = [:]
+            for check in SecurityCheck.allCases { states[check] = check.read() }
+            await self?.setSecurity(states)
+        }
+    }
+
+    /// Synchronous read, for snapshot rendering only.
+    func refreshSecurityNow() {
+        var states: [SecurityCheck: SecurityState] = [:]
+        for check in SecurityCheck.allCases { states[check] = check.read() }
+        security = states
+    }
+
+    private func setSecurity(_ states: [SecurityCheck: SecurityState]) { security = states }
+
+    func open(_ check: SecurityCheck) {
+        if let url = check.settingsURL { NSWorkspace.shared.open(url) }
+    }
+
+    nonisolated static let cameraCategory = "camera-on"
+    nonisolated static let openCameraAction = "open-camera-settings"
+
+    /// Takes camera permission back from every app (`tccutil reset Camera`), so
+    /// each one has to ask again. Apps already open keep access until they quit.
+    func resetCameraPermissions() {
+        let ok = (SystemState.run("/usr/bin/tccutil", ["reset", "Camera"]) ?? "").contains("Successfully")
+        notify(ok ? "Camera access reset" : "Couldn't reset camera access",
+               ok ? "Every app now has to ask before using the camera. Apps that are open keep access until you quit them."
+                  : "Open the Camera list in System Settings to remove apps by hand.")
+    }
+
+    func toggleTile(_ tile: SummaryTile) {
+        if let i = summaryTiles.firstIndex(of: tile) {
+            if summaryTiles.count > 1 { summaryTiles.remove(at: i) }
+        } else if summaryTiles.count < SummaryTile.maxShown {
+            summaryTiles.append(tile)
+        }
+    }
+
+    func setMicMuted(_ muted: Bool) {
+        guard privacy.micMuted != nil, privacy.micMuted != muted else { return }
+        toggleMicMute()
+    }
 
     func toggleMicMute() {
         guard let muted = privacy.micMuted else { return }
@@ -171,7 +383,23 @@ final class AppModel: ObservableObject {
                        allowOnBattery: lidAllowBattery, minBatteryPercent: 20, sleepWhenDone: true)
     }
 
+    /// `keepwatch lid start` from the CLI. Starting still goes through the
+    /// macOS password prompt, so only the person at the Mac can allow it.
+    func handleLidRequest(hours: Double?) {
+        guard !lidIntent.enabled, !lidBusy else { return }
+        if let hours { lidHours = hours }
+        NSApp.activate(ignoringOtherApps: true)
+        startLidSession()
+    }
+
     func startLidSession() {
+        if let p = power, p.onBattery {
+            guard lidAllowBattery else { banner = Banner(text: "Plug in, or turn on “Allow on battery”.", action: nil); return }
+            if let pct = p.batteryPercent, pct <= lidSessionPlan.minBatteryPercent {
+                banner = Banner(text: "Battery is at \(pct)%. Plug in to start a lid session.", action: nil)
+                return
+            }
+        }
         let plan = lidSessionPlan
         let now = Date()
         let command: String
@@ -296,6 +524,37 @@ final class AppModel: ObservableObject {
 
     func refreshPorts() { ports = ListeningPorts.current() }
 
+    /// Quits one agent session, after the UI asked the user to confirm.
+    func stopAgent(_ session: AgentSession) {
+        _ = matcher.stop(session, current: ProcessList.snapshot(wantArguments: matcher.isCandidate))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
+    }
+
+    func refreshTopApps() {
+        Task.detached(priority: .utility) { [weak self] in
+            let apps = TopApps.current(limit: 12)
+            await self?.setTopApps(apps)
+        }
+    }
+
+    /// Synchronous read, for snapshot rendering only.
+    func refreshTopAppsNow() { topApps = TopApps.current(limit: 12) }
+
+    private func setTopApps(_ apps: [AppUsage]) { if apps != topApps { topApps = apps } }
+
+    /// Quits an app politely (like ⌘Q), after the UI confirmed. Plain tools get SIGTERM.
+    /// Never macOS's own processes or Keepwatch itself.
+    func quitApp(_ app: AppUsage) {
+        guard !app.isSystem else { return }
+        let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == app.path }
+        if !running.isEmpty {
+            for r in running where r.processIdentifier != getpid() { r.terminate() }
+        } else {
+            for pid in app.pids { _ = ListeningPorts.stop(pid: pid) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refreshTopApps() }
+    }
+
     func stopProcess(_ port: ListeningPort) {
         ListeningPorts.stop(pid: port.pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refreshPorts() }
@@ -370,13 +629,16 @@ final class AppModel: ObservableObject {
 
     private var notificationsAsked = false
 
-    private func notify(_ title: String, _ body: String) {
+    private func notify(_ title: String, _ body: String, category: String? = nil) {
         guard Bundle.main.bundleIdentifier != nil else { return } // not running from an .app
         let center = UNUserNotificationCenter.current()
+        let sound = notificationSound
         let send = {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
+            if let category { content.categoryIdentifier = category }
+            if sound { content.sound = .default }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
         if notificationsAsked { send(); return }

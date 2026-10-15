@@ -1,5 +1,6 @@
 import KeepwatchCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct KeepwatchApp: App {
@@ -63,8 +64,15 @@ struct WindowOpenerBridge: View {
 }
 
 /// Handles `keepwatch://` URLs and the `--render-snapshots DIR` launch flag.
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if Bundle.main.bundleIdentifier != nil {
+            let center = UNUserNotificationCenter.current()
+            center.delegate = self
+            let open = UNNotificationAction(identifier: AppModel.openCameraAction, title: "Open Camera list", options: [.foreground])
+            center.setNotificationCategories([UNNotificationCategory(identifier: AppModel.cameraCategory, actions: [open],
+                                                                     intentIdentifiers: [])])
+        }
         let args = CommandLine.arguments
         if let i = args.firstIndex(of: "--render-snapshots"), args.indices.contains(i + 1) {
             let dir = URL(fileURLWithPath: args[i + 1], isDirectory: true)
@@ -73,6 +81,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+    }
+
+    /// Show alerts even while Keepwatch's own window is in front.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+
+    /// Clicking a camera alert, or its button, opens the Camera permission list.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.notification.request.content.categoryIdentifier == AppModel.cameraCategory {
+            Task { @MainActor in AppModel.shared.open(.camera) }
+        }
+        completionHandler()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -88,10 +111,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum Snapshots {
     static func render(model: AppModel, to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        model.refreshSecurityNow()
         for scheme in [ColorScheme.light, .dark] {
             let suffix = scheme == .dark ? "dark" : "light"
             write(MenuView().environmentObject(model), dir.appendingPathComponent("menu-\(suffix).png"), scheme)
-            write(DashboardView().environmentObject(model), dir.appendingPathComponent("dashboard-\(suffix).png"), scheme)
+            write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-\(suffix).png"), scheme)
+        }
+        // The menu while a timed session runs, then put the user's own mode back.
+        let saved = model.mode
+        model.keepAwake(for: 3 * 3_600)
+        model.tick()
+        write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
+        model.setMode(saved)
+        model.refreshPorts()
+        model.refreshTopAppsNow()
+        let tiles = model.summaryTiles
+        model.summaryTiles = SummaryTile.allCases
+        write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-all-tiles-dark.png"), .dark)
+        model.summaryTiles = tiles
+        for tab in [DashboardTab.agents, .privacy, .security, .ports, .power, .settings] {
+            write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(tab.rawValue)-dark.png"), .dark)
         }
     }
 

@@ -4,7 +4,7 @@ import KeepwatchCore
 
 // `keepwatch`: the command line for people and AI agents. See CLICommand.usage.
 
-let version = "0.1.0"
+let version = "0.2.0"
 let appBundleID = "app.keepwatch.Keepwatch"
 
 func out(_ s: String) { FileHandle.standardOutput.write(Data((s + "\n").utf8)) }
@@ -68,8 +68,109 @@ func holdAwake(label: String, display: Bool = false, until done: () -> Bool) {
     screen.release()
 }
 
+/// Agent sessions with working/idle from two CPU samples one second apart.
+func agentRows() -> [AgentRow] {
+    let matcher = AgentMatcher()
+    let sessions = matcher.sessions(in: ProcessList.snapshot(wantArguments: matcher.isCandidate))
+    let first = Dictionary(uniqueKeysWithValues: sessions.compactMap { s in ProcessList.cpuSeconds(of: s.pid).map { (s.pid, $0) } })
+    let start = Date()
+    if !sessions.isEmpty { Thread.sleep(forTimeInterval: 1) }
+    let elapsed = Date().timeIntervalSince(start)
+    return sessions.map { s in
+        let used = (ProcessList.cpuSeconds(of: s.pid) ?? 0) - (first[s.pid] ?? 0)
+        return AgentRow(agent: s.agent, pid: s.pid, folder: s.folder, started: s.started,
+                        activity: AgentActivity.classify(cpuSeconds: used, over: elapsed).rawValue)
+    }
+}
+
+struct AgentRow: Encodable {
+    var agent: String
+    var pid: Int32
+    var folder: String?
+    var started: Date?
+    var activity: String
+}
+
 func run(_ command: CLICommand) -> Int32 {
     switch command {
+    case .agents(let json):
+        let rows = agentRows()
+        if json {
+            let e = JSONEncoder()
+            e.outputFormatting = [.prettyPrinted, .sortedKeys]
+            e.dateEncodingStrategy = .iso8601
+            out((try? e.encode(rows)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]")
+        } else if rows.isEmpty {
+            out("No agents running.")
+        } else {
+            for r in rows {
+                let folder = r.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "?"
+                out("\(r.agent)  pid \(r.pid)  \(r.activity)  \(folder)")
+            }
+        }
+        return 0
+    case .agentStop(let pid):
+        let matcher = AgentMatcher()
+        let current = ProcessList.snapshot(wantArguments: matcher.isCandidate)
+        guard let session = matcher.sessions(in: current).first(where: { $0.pid == pid }) else {
+            err("pid \(pid) is not a running agent session"); return 2
+        }
+        guard matcher.stop(session, current: current) else { err("couldn't stop pid \(pid)"); return 2 }
+        out("Asked \(session.agent) (pid \(pid)) to quit."); return 0
+    case .privacy(let json):
+        let p = PrivacyMonitor.snapshot()
+        let log = PrivacyLog.load()
+        if json {
+            struct Report: Encodable { var micInUse: Bool; var cameraInUse: Bool; var micMuted: Bool?; var history: [PrivacyEvent] }
+            let e = JSONEncoder()
+            e.outputFormatting = [.prettyPrinted, .sortedKeys]
+            e.dateEncodingStrategy = .iso8601
+            let r = Report(micInUse: p.micInUse, cameraInUse: p.cameraInUse, micMuted: p.micMuted, history: Array(log.recent.prefix(50)))
+            out((try? e.encode(r)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}")
+        } else {
+            out("Mic \(p.micMuted == true ? "muted" : (p.micInUse ? "IN USE" : "not in use")), camera \(p.cameraInUse ? "IN USE" : "not in use")")
+            for e in log.recent.prefix(10) {
+                let what = "\(e.device == .mic ? "Mic" : "Camera") \(e.on ? "on" : "off")" + (e.apps.isEmpty ? "" : " (\(e.apps.joined(separator: ", ")))")
+                out("  \(e.date.formatted(date: .abbreviated, time: .shortened))  \(what)")
+            }
+            if log.events.isEmpty { out("  No history yet (the Keepwatch app records it).") }
+        }
+        return 0
+    case .apps(let json):
+        let apps = TopApps.current(limit: 15)
+        if json {
+            struct Row: Encodable { var name: String; var path: String; var bytes: UInt64; var processes: Int; var system: Bool }
+            out(jsonString(apps.map { Row(name: $0.name, path: $0.path, bytes: $0.bytes, processes: $0.pids.count, system: $0.isSystem) }))
+        } else {
+            for a in apps {
+                out(String(format: "%10@  %@%@", TopApps.describe(bytes: a.bytes), a.name,
+                           (a.pids.count > 1 ? " (\(a.pids.count) processes)" : "") + (a.isSystem ? "  macOS" : "")))
+            }
+        }
+        return 0
+    case .security(let json):
+        let checks = SecurityCheck.allCases.map { ($0, $0.read()) }
+        if json {
+            struct Row: Encodable { var check: String; var state: String; var ok: Bool? }
+            out(jsonString(checks.map { c, s in
+                Row(check: c.rawValue, state: s.label, ok: { if case .good = s { return true }; if case .weak = s { return false }; return nil }())
+            }))
+        } else {
+            for (c, s) in checks {
+                let mark: String = { if case .good = s { return "ok " }; if case .weak = s { return "!! " }; return "?  " }()
+                out("\(mark) \(c.title): \(s.label)")
+            }
+        }
+        return 0
+    case .lidStart(let hours):
+        guard appRunning() else { err("open the Keepwatch app first; it shows the password prompt"); return 2 }
+        var info: [String: Any] = [:]
+        if let hours { info["hours"] = hours }
+        DistributedNotificationCenter.default().postNotificationName(
+            Notification.Name(LidRequest.notificationName), object: nil, userInfo: info, deliverImmediately: true)
+        out("Asked Keepwatch to start a lid session. macOS will ask for your password on the Mac.")
+        out("Check with: keepwatch status")
+        return 0
     case .help:
         out(CLICommand.usage); return 0
     case .version:
@@ -105,7 +206,7 @@ func run(_ command: CLICommand) -> Int32 {
         if appRunning(), let url = command.appURL {
             guard tellApp(url) else { err("couldn't reach the Keepwatch app"); return 2 }
             switch request {
-            case .minutes(let m): out("Keepwatch app: keeping your Mac awake for \(m) min.")
+            case .minutes(let m): out("Keepwatch app: keeping your Mac awake for \(AwakeDuration.describe(TimeInterval(m) * 60)).")
             case .indefinitely: out("Keepwatch app: keeping your Mac awake until 'keepwatch awake --off'.")
             case .whileAgentsRun: out("Keepwatch app: keeping your Mac awake while agents run.")
             case .off: out("Keepwatch app: keep-awake off.")
@@ -119,7 +220,7 @@ func run(_ command: CLICommand) -> Int32 {
             return 0
         case .minutes(let m):
             let end = Date().addingTimeInterval(TimeInterval(m) * 60)
-            out("Keeping your Mac awake for \(m) min (Ctrl-C to stop)…")
+            out("Keeping your Mac awake for \(AwakeDuration.describe(TimeInterval(m) * 60)) (Ctrl-C to stop)…")
             holdAwake(label: "\(m) min") { Date() >= end }
         case .indefinitely:
             out("Keeping your Mac awake until you press Ctrl-C…")

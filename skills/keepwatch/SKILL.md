@@ -1,6 +1,6 @@
 ---
 name: keepwatch
-description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?" or "end the lid session". macOS only.
+description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?", "keep it awake for 2 days", "which agents are running?", "stop that agent", "start a lid session" or "end the lid session". macOS only.
 license: Apache-2.0
 compatibility: macOS 14+. Needs the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch) with its `keepwatch` command installed (Dashboard → "Install the keepwatch command").
 ---
@@ -30,7 +30,8 @@ The Mac stays awake exactly while the command runs. `keepwatch` exits with the c
 ## Keep awake for a period, or while agents run
 
 ```sh
-keepwatch awake --minutes 90     # max 1440
+keepwatch awake --for 3h         # 45m, 1h30m, 2d, 1w… (max 30 days)
+keepwatch awake --until 18:30    # until a clock time (tomorrow if it has passed)
 keepwatch awake --agents         # while Claude Code, Codex, Gemini CLI… run, +2 min grace
 keepwatch awake --off            # always undo what you started
 ```
@@ -49,11 +50,24 @@ Before starting long work on battery, check `power.batteryPercent` and `power.on
 
 ```sh
 keepwatch ports --json           # your processes on TCP ports ("what's on :3000?")
+keepwatch agents --json          # agent sessions: agent, pid, folder, started, activity (working|idle)
+keepwatch privacy --json         # mic and camera now, plus recent on/off history
+keepwatch security --json        # firewall, FileVault, Gatekeeper, SIP, AirDrop: state and ok
+keepwatch apps --json            # the user's apps by memory (bytes, processes); read-only
 ```
+
+## Agent sessions
+
+```sh
+keepwatch agents                 # which agents run where, and whether each is working
+keepwatch agents stop PID        # quit one session (only works on agent sessions)
+```
+
+Only stop a session when the user asks for that specific one. Never stop your own session: match the `folder` and `started` fields before you do.
 
 ## Rules
 
-- **Never start a lid-closed session.** You can't: it needs the user's administrator password, and the command refuses. If the user wants one, tell them to click **Start lid session** in the Keepwatch menu.
+- **Lid-closed sessions need the user.** Run `keepwatch lid start [--hours N]` only when the user asks for one. It asks the Keepwatch app, which shows the macOS password prompt; the user must type their password at the Mac. Never try to get around the prompt. Tell the user to look at their Mac, then confirm with `keepwatch status` (`sleep.sleepDisabled` becomes `true`).
 - **Ending one is fine:** `keepwatch lid end` only turns sleep back on.
 - **Undo what you start.** Pair every `awake` with `awake --off`, or prefer `run --`, which cleans up on its own.
 - **Mute the mic only when asked:** `keepwatch mic mute|unmute`.
