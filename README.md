@@ -11,10 +11,11 @@
 
 A native macOS menu-bar app that keeps your Mac awake for AI coding agents, even with the lid closed, and keeps watch on your mic and camera.
 
-<p align="center">
-  <a href="https://agentskilldeck.github.io/keepwatch/#tour"><img src="docs/media/tour-poster.jpg" alt="Watch the 85-second Keepwatch tour (narrated)" width="820"></a>
-  <br><sub>▶ <a href="https://agentskilldeck.github.io/keepwatch/#tour">Watch the 85-second tour</a> · <a href="https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.2.0/keepwatch-tour.mp4">MP4</a></sub>
-</p>
+**Keepwatch in 85 seconds** (narrated tour, demo data):
+
+https://github.com/user-attachments/assets/15249e04-ae40-4b3f-8cc4-2ddb3411619d
+
+<sub>Also on the <a href="https://agentskilldeck.github.io/keepwatch/#tour">website</a> with chapters · <a href="https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.2.0/keepwatch-tour.mp4">MP4</a> · Music: “Soft Corporate” by MusicLFiles, CC BY 4.0 · Voice: Supertonic 3, generated on device</sub>
 
 <p align="center">
   <img src="docs/media/menu-dark.jpg" alt="The Keepwatch menu: privacy switches, keep-awake times, agents and lid-closed sessions" width="300">
