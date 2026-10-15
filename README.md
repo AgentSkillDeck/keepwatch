@@ -114,7 +114,7 @@ Starting a lid session is deliberately **not** available by URL, so a web page c
 ## Build, sign, notarize
 
 ```sh
-swift test                      # 67 unit, shell-watchdog and live read-only tests
+swift test                      # 65 unit, shell-watchdog and live read-only tests
 scripts/build-app.sh            # dist/Keepwatch.app (universal)
 scripts/sign.sh                 # Developer ID + hardened runtime + timestamp
 # one-time: store notarization credentials in your keychain
