@@ -216,3 +216,149 @@ public struct SystemLoadSampler: Sendable {
         return Int(min(100, (Double(part) / Double(whole) * 100).rounded()))
     }
 }
+
+// MARK: - Automatic keep-awake
+
+/// Keep awake automatically while a condition holds, such as being plugged in.
+public struct AutoAwake: Equatable, Sendable {
+    public var whilePluggedIn: Bool
+    public var whileExternalDisplay: Bool
+
+    public init(whilePluggedIn: Bool = false, whileExternalDisplay: Bool = false) {
+        self.whilePluggedIn = whilePluggedIn
+        self.whileExternalDisplay = whileExternalDisplay
+    }
+
+    /// Why to hold the Mac awake right now, or nil.
+    public func reason(onBattery: Bool?, screens: Int) -> String? {
+        if whilePluggedIn, onBattery == false { return "plugged in" }
+        if whileExternalDisplay, screens > 1 { return "external display connected" }
+        return nil
+    }
+}
+
+// MARK: - Battery history
+
+/// One reading a day of battery health and cycle count, kept on this Mac.
+public struct BatteryReading: Equatable, Codable, Identifiable, Sendable {
+    public var day: String // yyyy-MM-dd
+    public var healthPercent: Int
+    public var cycles: Int?
+    public var id: String { day }
+
+    public init(day: String, healthPercent: Int, cycles: Int?) {
+        self.day = day; self.healthPercent = healthPercent; self.cycles = cycles
+    }
+}
+
+public struct BatteryHistory: Equatable, Codable, Sendable {
+    public static let maxReadings = 400
+    public private(set) var readings: [BatteryReading] = []
+
+    public init(readings: [BatteryReading] = []) {
+        self.readings = Array(readings.suffix(Self.maxReadings))
+    }
+
+    public static func dayString(_ date: Date, calendar: Calendar = .current) -> String {
+        let c = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
+    }
+
+    /// Adds today's reading unless there already is one. Returns true if it changed.
+    @discardableResult
+    public mutating func record(health: Int?, cycles: Int?, on date: Date, calendar: Calendar = .current) -> Bool {
+        guard let health, (1...150).contains(health) else { return false }
+        let day = Self.dayString(date, calendar: calendar)
+        guard readings.last?.day != day else { return false }
+        readings.append(BatteryReading(day: day, healthPercent: health, cycles: cycles))
+        if readings.count > Self.maxReadings { readings.removeFirst(readings.count - Self.maxReadings) }
+        return true
+    }
+
+    /// Health change from the first reading to the last, in points.
+    public var change: Int? {
+        guard let first = readings.first, let last = readings.last, readings.count > 1 else { return nil }
+        return last.healthPercent - first.healthPercent
+    }
+
+    public static let defaultURL: URL = PrivacyLog.defaultURL.deletingLastPathComponent().appendingPathComponent("battery-history.json")
+
+    public static func load(from url: URL = defaultURL) -> BatteryHistory {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = attrs[.size] as? Int, size < 500_000,
+              let data = try? Data(contentsOf: url),
+              let h = try? JSONDecoder().decode(BatteryHistory.self, from: data) else { return BatteryHistory() }
+        return BatteryHistory(readings: h.readings)
+    }
+
+    public func save(to url: URL = defaultURL) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if let data = try? JSONEncoder().encode(self) { try? data.write(to: url, options: .atomic) }
+    }
+}
+
+// MARK: - Apps using the most memory
+
+/// An app (all its helper processes together) and the memory it uses.
+public struct AppUsage: Equatable, Identifiable, Sendable {
+    public var name: String
+    /// The .app bundle path, or the executable path for non-app processes.
+    public var path: String
+    public var pids: [Int32]
+    /// Physical footprint, the number Activity Monitor shows as Memory.
+    public var bytes: UInt64
+    public var isSystem: Bool
+    public var id: String { path }
+
+    public init(name: String, path: String, pids: [Int32], bytes: UInt64, isSystem: Bool) {
+        self.name = name; self.path = path; self.pids = pids; self.bytes = bytes; self.isSystem = isSystem
+    }
+}
+
+public enum TopApps {
+    /// The bundle that owns an executable path: "/Applications/Google Chrome.app" for any of
+    /// Chrome's helpers (the outermost .app wins), or the path itself for plain tools.
+    public static func owner(ofExecutable path: String) -> (path: String, name: String) {
+        if let r = path.range(of: ".app/") {
+            let bundle = String(path[..<r.lowerBound]) + ".app"
+            let name = ((bundle as NSString).lastPathComponent as NSString).deletingPathExtension
+            return (bundle, name)
+        }
+        return (path, (path as NSString).lastPathComponent)
+    }
+
+    /// Groups processes by owning app and sorts by memory, biggest first.
+    public static func group(_ rows: [(pid: Int32, path: String, bytes: UInt64)], limit: Int) -> [AppUsage] {
+        var byOwner: [String: AppUsage] = [:]
+        for row in rows {
+            let o = owner(ofExecutable: row.path)
+            var app = byOwner[o.path] ?? AppUsage(name: o.name, path: o.path, pids: [], bytes: 0,
+                                                 isSystem: ListeningPorts.isSystemPath(o.path))
+            app.pids.append(row.pid)
+            app.bytes = app.bytes &+ row.bytes
+            byOwner[o.path] = app
+        }
+        return byOwner.values.sorted { ($0.bytes, $1.name) > ($1.bytes, $0.name) }.prefix(max(0, limit)).map { $0 }
+    }
+
+    /// Your own processes by app, biggest memory first. Other users' processes
+    /// can't be read without root, and aren't yours to quit anyway.
+    public static func current(limit: Int = 12) -> [AppUsage] {
+        let me = getpid()
+        var rows: [(pid: Int32, path: String, bytes: UInt64)] = []
+        for p in ProcessList.snapshot() where p.pid != me {
+            var info = rusage_info_v2()
+            let ok = withUnsafeMutablePointer(to: &info) { ptr in
+                ptr.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { proc_pid_rusage(p.pid, RUSAGE_INFO_V2, $0) == 0 }
+            }
+            guard ok, info.ri_phys_footprint > 0, let path = ListeningPorts.executablePath(p.pid) else { continue }
+            rows.append((p.pid, path, info.ri_phys_footprint))
+        }
+        return group(rows, limit: limit)
+    }
+
+    /// "1.4 GB", "312 MB".
+    public static func describe(bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+    }
+}

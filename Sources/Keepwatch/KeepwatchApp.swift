@@ -124,11 +124,12 @@ enum Snapshots {
         write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
         model.setMode(saved)
         model.refreshPorts()
+        model.refreshTopAppsNow()
         let tiles = model.summaryTiles
         model.summaryTiles = SummaryTile.allCases
         write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-all-tiles-dark.png"), .dark)
         model.summaryTiles = tiles
-        for tab in [DashboardTab.agents, .privacy, .security, .ports, .power] {
+        for tab in [DashboardTab.agents, .privacy, .security, .ports, .power, .settings] {
             write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(tab.rawValue)-dark.png"), .dark)
         }
     }

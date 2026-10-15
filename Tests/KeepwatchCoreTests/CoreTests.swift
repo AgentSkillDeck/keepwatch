@@ -573,3 +573,63 @@ final class SecurityTests: XCTestCase {
         }
     }
 }
+
+final class AutoAndHistoryTests: XCTestCase {
+    func testAutoAwakeReasons() {
+        XCTAssertNil(AutoAwake().reason(onBattery: false, screens: 3))
+        XCTAssertEqual(AutoAwake(whilePluggedIn: true).reason(onBattery: false, screens: 1), "plugged in")
+        XCTAssertNil(AutoAwake(whilePluggedIn: true).reason(onBattery: true, screens: 1))
+        XCTAssertNil(AutoAwake(whilePluggedIn: true).reason(onBattery: nil, screens: 1), "unknown power never holds")
+        XCTAssertEqual(AutoAwake(whileExternalDisplay: true).reason(onBattery: true, screens: 2), "external display connected")
+        XCTAssertNil(AutoAwake(whileExternalDisplay: true).reason(onBattery: true, screens: 1))
+    }
+
+    func testBatteryHistoryOnePerDayCappedAndRobust() throws {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(identifier: "UTC")!
+        var h = BatteryHistory()
+        let d0 = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertTrue(h.record(health: 92, cycles: 100, on: d0, calendar: cal))
+        XCTAssertFalse(h.record(health: 91, cycles: 101, on: d0.addingTimeInterval(3600), calendar: cal))
+        XCTAssertFalse(h.record(health: nil, cycles: 1, on: d0.addingTimeInterval(86_400), calendar: cal))
+        XCTAssertFalse(h.record(health: 0, cycles: 1, on: d0.addingTimeInterval(86_400), calendar: cal))
+        XCTAssertTrue(h.record(health: 90, cycles: 110, on: d0.addingTimeInterval(86_400), calendar: cal))
+        XCTAssertEqual(h.change, -2)
+        for i in 2..<(BatteryHistory.maxReadings + 10) {
+            h.record(health: 90, cycles: nil, on: d0.addingTimeInterval(TimeInterval(i) * 86_400), calendar: cal)
+        }
+        XCTAssertEqual(h.readings.count, BatteryHistory.maxReadings)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
+        h.save(to: url)
+        XCTAssertEqual(BatteryHistory.load(from: url).readings.count, BatteryHistory.maxReadings)
+        try Data("{".utf8).write(to: url)
+        XCTAssertEqual(BatteryHistory.load(from: url).readings, [])
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+final class TopAppsTests: XCTestCase {
+    func testGroupsHelpersUnderTheirApp() {
+        let rows: [(pid: Int32, path: String, bytes: UInt64)] = [
+            (10, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", 500),
+            (11, "/Applications/Google Chrome.app/Contents/Frameworks/X.framework/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer)", 700),
+            (12, "/opt/homebrew/bin/node", 900),
+            (13, "/System/Library/CoreServices/Finder.app/Contents/MacOS/Finder", 50),
+        ]
+        let apps = TopApps.group(rows, limit: 10)
+        XCTAssertEqual(apps.map(\.name), ["Google Chrome", "node", "Finder"])
+        XCTAssertEqual(apps.first?.bytes, 1_200)
+        XCTAssertEqual(apps.first?.pids.sorted(), [10, 11])
+        XCTAssertEqual(apps.last?.isSystem, true)
+        XCTAssertEqual(apps[1].isSystem, false)
+        XCTAssertEqual(TopApps.group(rows, limit: 1).count, 1)
+        XCTAssertEqual(TopApps.group(rows, limit: -4).count, 0)
+    }
+
+    func testLiveListIsReadableAndExcludesSelf() {
+        let apps = TopApps.current(limit: 50)
+        XCTAssertFalse(apps.contains { $0.pids.contains(getpid()) })
+        XCTAssertEqual(apps, apps.sorted { $0.bytes > $1.bytes } )
+        XCTAssertEqual(TopApps.describe(bytes: UInt64.max).isEmpty, false)
+    }
+}

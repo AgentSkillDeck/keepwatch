@@ -24,6 +24,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var agentActivity: [Int32: AgentActivity] = [:]
     @Published private(set) var load = SystemLoad(cpuPercent: nil, memoryPercent: nil)
     @Published private(set) var privacyLog = PrivacyLog.load()
+    @Published private(set) var batteryHistory = BatteryHistory.load()
+    @Published private(set) var topApps: [AppUsage] = []
+    /// Why Keepwatch is holding the Mac awake on its own (plugged in, external display), if it is.
+    @Published private(set) var autoReason: String?
     @Published private(set) var privacy = PrivacySnapshot.idle
     @Published private(set) var power: PowerState?
     @Published private(set) var pmset: PMSet.Settings?
@@ -56,6 +60,11 @@ final class AppModel: ObservableObject {
     @Published var stopAwakeOnBattery: Bool { didSet { defaults.set(stopAwakeOnBattery, forKey: "stopAwakeOnBattery") } }
     /// Stop an ordinary keep-awake at low battery.
     @Published var stopAwakeOnLowBattery: Bool { didSet { defaults.set(stopAwakeOnLowBattery, forKey: "stopAwakeLow") } }
+    /// Keep awake automatically while plugged in / while an external display is connected.
+    @Published var autoWhilePlugged: Bool { didSet { defaults.set(autoWhilePlugged, forKey: "autoPlugged"); tick() } }
+    @Published var autoWhileDisplay: Bool { didSet { defaults.set(autoWhileDisplay, forKey: "autoDisplay"); tick() } }
+    /// Play a sound with Keepwatch's notifications.
+    @Published var notificationSound: Bool { didSet { defaults.set(notificationSound, forKey: "sound") } }
     /// ⌃⌥⌘K starts or stops keep-awake from anywhere.
     @Published var hotkeyEnabled: Bool { didSet { defaults.set(hotkeyEnabled, forKey: "hotkey"); Hotkey.shared.setEnabled(hotkeyEnabled) } }
     /// Notify when the mic or camera turns on.
@@ -102,6 +111,9 @@ final class AppModel: ObservableObject {
         stopAwakeOnBattery = defaults.bool(forKey: "stopAwakeOnBattery")
         stopAwakeOnLowBattery = defaults.object(forKey: "stopAwakeLow") as? Bool ?? true
         hotkeyEnabled = defaults.object(forKey: "hotkey") as? Bool ?? true
+        autoWhilePlugged = defaults.bool(forKey: "autoPlugged")
+        autoWhileDisplay = defaults.bool(forKey: "autoDisplay")
+        notificationSound = defaults.object(forKey: "sound") as? Bool ?? true
         alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
         // "micCamera" was one tile before 0.2; it is now two.
         let savedTiles = (UserDefaults.standard.stringArray(forKey: "summaryTiles") ?? [])
@@ -183,22 +195,29 @@ final class AppModel: ObservableObject {
         tickCount += 1
         let now = Date()
         let processes = ProcessList.snapshot(wantArguments: matcher.isCandidate)
-        agents = matcher.runningAgents(in: processes)
+        let running = matcher.runningAgents(in: processes)
+        if running != agents { agents = running }
         let sessions = matcher.sessions(in: processes)
         if sessions != agentSessions { agentSessions = sessions }
         trackAgentActivity(now: now)
         let decision = engine.tick(now: now, agents: Set(agents.keys))
-        mode = engine.mode
-        remaining = decision.remaining
-        holding = decision.holdAssertion
+        if engine.mode != mode { mode = engine.mode }
+        if decision.remaining != remaining { remaining = decision.remaining }
+        let auto = AutoAwake(whilePluggedIn: autoWhilePlugged, whileExternalDisplay: autoWhileDisplay)
+            .reason(onBattery: power?.onBattery, screens: NSScreen.screens.count)
+        if auto != autoReason { autoReason = auto }
+        let hold = decision.holdAssertion || auto != nil
+        if hold != holding { holding = hold }
         apply()
         for event in decision.events { handle(event) }
 
         guardKeepAwake()
-        load = loadSampler.sample()
+        let l = loadSampler.sample()
+        if l != load { load = l }
 
         let before = privacy
-        privacy = PrivacyMonitor.snapshot()
+        let snap = PrivacyMonitor.snapshot()
+        if snap != privacy { privacy = snap }
         if tickCount > 1 { alertIfPrivacyChanged(from: before) }
         if tickCount % 5 == 1 { refreshSlow() }
         if tickCount % 30 == 1 { refreshSecurity() }
@@ -207,7 +226,9 @@ final class AppModel: ObservableObject {
     }
 
     private func refreshSlow() {
-        power = SystemState.power()
+        let p = SystemState.power()
+        if p != power { power = p }
+        if batteryHistory.record(health: p.healthPercent, cycles: p.cycleCount, on: Date()) { batteryHistory.save() }
         pmset = SystemState.pmsetSettings()
         for t in QuickToggle.allCases where toggles[t] == nil { toggles[t] = t.read() }
         launchAtLogin = SMAppService.mainApp.status == .enabled
@@ -509,6 +530,31 @@ final class AppModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
     }
 
+    func refreshTopApps() {
+        Task.detached(priority: .utility) { [weak self] in
+            let apps = TopApps.current(limit: 12)
+            await self?.setTopApps(apps)
+        }
+    }
+
+    /// Synchronous read, for snapshot rendering only.
+    func refreshTopAppsNow() { topApps = TopApps.current(limit: 12) }
+
+    private func setTopApps(_ apps: [AppUsage]) { if apps != topApps { topApps = apps } }
+
+    /// Quits an app politely (like ⌘Q), after the UI confirmed. Plain tools get SIGTERM.
+    /// Never macOS's own processes or Keepwatch itself.
+    func quitApp(_ app: AppUsage) {
+        guard !app.isSystem else { return }
+        let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == app.path }
+        if !running.isEmpty {
+            for r in running where r.processIdentifier != getpid() { r.terminate() }
+        } else {
+            for pid in app.pids { _ = ListeningPorts.stop(pid: pid) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.refreshTopApps() }
+    }
+
     func stopProcess(_ port: ListeningPort) {
         ListeningPorts.stop(pid: port.pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refreshPorts() }
@@ -586,11 +632,13 @@ final class AppModel: ObservableObject {
     private func notify(_ title: String, _ body: String, category: String? = nil) {
         guard Bundle.main.bundleIdentifier != nil else { return } // not running from an .app
         let center = UNUserNotificationCenter.current()
+        let sound = notificationSound
         let send = {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
             if let category { content.categoryIdentifier = category }
+            if sound { content.sound = .default }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
         if notificationsAsked { send(); return }

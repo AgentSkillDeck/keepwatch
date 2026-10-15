@@ -52,7 +52,7 @@ public enum ListeningPorts {
         return systemPrefixes.contains { path.hasPrefix($0) }
     }
 
-    static func executablePath(_ pid: Int32) -> String? {
+    public static func executablePath(_ pid: Int32) -> String? {
         var buf = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         let n = proc_pidpath(pid, &buf, UInt32(buf.count))
         guard n > 0 else { return nil }

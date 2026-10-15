@@ -14,7 +14,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .privacy: "Privacy"
         case .security: "Security"
         case .power: "Battery"
-        case .ports: "Ports"
+        case .ports: "Apps"
         case .settings: "Settings"
         }
     }
@@ -27,7 +27,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
         case .privacy: "hand.raised.fill"
         case .security: "checkmark.shield.fill"
         case .power: "bolt.fill"
-        case .ports: "network"
+        case .ports: "square.stack.3d.up.fill"
         case .settings: "slider.horizontal.3"
         }
     }
@@ -65,6 +65,9 @@ struct DashboardView: View {
                           subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
                 SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                           isOn: $model.notifyWhenAgentsFinish)
+                SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
+                          subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
+                SwitchRow(icon: "display.2", title: "Stay awake with an external display", isOn: $model.autoWhileDisplay)
                 SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
                 SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
                 SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
@@ -109,15 +112,22 @@ struct DashboardView: View {
         case .security:
             Card("Security", icon: "checkmark.shield.fill") { SecurityList() }
         case .power:
-            Card("Battery & power", icon: "bolt.fill") { PowerFacts() }
+            VStack(spacing: 16) {
+                Card("Battery & power", icon: "bolt.fill") { PowerFacts() }
+                Card("Battery health over time", icon: "chart.line.downtrend.xyaxis") { BatteryHistoryView() }
+            }
         case .ports:
-            Card("Listening ports", icon: "network") { PortsList() }
+            VStack(spacing: 16) {
+                Card("Using the most memory", icon: "memorychip") { TopAppsList() }
+                Card("Listening ports", icon: "network") { PortsList() }
+            }
         case .settings:
             Card("Settings", icon: "slider.horizontal.3") {
                 ForEach(QuickToggle.allCases) { t in
                     SwitchRow(icon: t.icon, title: t.title,
                               isOn: Binding(get: { model.toggles[t] ?? false }, set: { model.setToggle(t, $0) }))
                 }
+                SwitchRow(icon: "speaker.wave.2", title: "Sound with notifications", isOn: $model.notificationSound)
                 SwitchRow(icon: "power.circle", title: "Open Keepwatch at login",
                           subtitle: "Recommended if you use lid sessions",
                           isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
@@ -606,5 +616,97 @@ struct PrivacyHistory: View {
         let device = e.device == .mic ? "Mic" : "Camera"
         let state = e.on ? "on" : "off"
         return e.apps.isEmpty ? "\(device) \(state)" : "\(device) \(state) · \(e.apps.joined(separator: ", "))"
+    }
+}
+
+/// Your apps by memory, with a confirmed Quit. macOS's own processes are shown but can't be quit.
+struct TopAppsList: View {
+    @EnvironmentObject var model: AppModel
+    @State private var confirming: AppUsage?
+    private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if model.topApps.isEmpty { Text("Reading memory use…").font(.callout).foregroundStyle(.secondary) }
+            let top = model.topApps.first?.bytes ?? 1
+            ForEach(model.topApps) { app in
+                HStack(spacing: 10) {
+                    AppIcon(path: app.path)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(app.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            if app.pids.count > 1 {
+                                Text("\(app.pids.count) processes").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        GeometryReader { g in
+                            Capsule().fill(Color.primary.opacity(0.08))
+                                .overlay(alignment: .leading) {
+                                    Capsule().fill(app.isSystem ? Color.secondary : Brand.teal)
+                                        .frame(width: max(4, g.size.width * CGFloat(Double(app.bytes) / Double(max(top, 1)))))
+                                }
+                        }
+                        .frame(height: 5)
+                    }
+                    Text(TopApps.describe(bytes: app.bytes)).font(.callout.monospacedDigit()).frame(width: 80, alignment: .trailing)
+                    if app.isSystem {
+                        Text("macOS").font(.caption.weight(.semibold)).foregroundStyle(.secondary).frame(width: 64)
+                    } else {
+                        Button { confirming = app } label: { Label("Quit", systemImage: "xmark.circle.fill") }
+                            .controlSize(.small).frame(width: 64)
+                    }
+                }
+            }
+        }
+        .onAppear { model.refreshTopApps() }
+        .onReceive(timer) { _ in model.refreshTopApps() }
+        .confirmationDialog(confirming.map { "Quit \($0.name)?" } ?? "",
+                            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
+            Button("Quit", role: .destructive) { if let a = confirming { model.quitApp(a) } }
+        } message: {
+            Text("Like pressing ⌘Q in the app. It may ask you to save your work.")
+        }
+    }
+}
+
+/// The app's own icon, from its bundle; a generic one for plain tools.
+struct AppIcon: View {
+    var path: String
+    var body: some View {
+        Image(nsImage: path.hasSuffix(".app") ? NSWorkspace.shared.icon(forFile: path)
+                                              : NSWorkspace.shared.icon(for: .unixExecutable))
+            .resizable().frame(width: 28, height: 28)
+    }
+}
+
+/// One reading a day of battery health, as a small line and the change.
+struct BatteryHistoryView: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        let r = model.batteryHistory.readings
+        VStack(alignment: .leading, spacing: 8) {
+            if r.count < 2 {
+                Text("Keepwatch saves one reading a day. Check back in a few days.").font(.callout).foregroundStyle(.secondary)
+            } else {
+                GeometryReader { g in
+                    let values = r.map { Double($0.healthPercent) }
+                    let lo = (values.min() ?? 0) - 1, hi = (values.max() ?? 100) + 1
+                    Path { p in
+                        for (i, v) in values.enumerated() {
+                            let x = g.size.width * CGFloat(i) / CGFloat(max(1, values.count - 1))
+                            let y = g.size.height * CGFloat(1 - (v - lo) / max(0.001, hi - lo))
+                            i == 0 ? p.move(to: CGPoint(x: x, y: y)) : p.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+                    .stroke(Brand.teal, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                }
+                .frame(height: 70)
+            }
+            if let first = r.first, let last = r.last {
+                Text("\(last.healthPercent)% now" + (model.batteryHistory.change.map { ", \($0 >= 0 ? "+" : "")\($0) points since \(first.day)" } ?? ""))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
