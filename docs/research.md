@@ -41,3 +41,7 @@ These notes come from two research passes (similar apps and trending projects, t
 6. **Security nudges:** for example, "Chrome remote debugging port 9222 is open: any local program can control your browser". The listening-ports view already makes this visible.
 7. Per-app camera attribution (best effort), a `tccutil reset` button with confirmation, and LaunchAgents viewer and cleaner.
 8. Battery charge limit (needs root and SMC writes), external display brightness (DDC), and a lid-angle readout.
+
+## Tested and dropped (2026-10-16)
+
+- **"Stay active" for Slack and Teams.** `IOPMAssertionDeclareUserActivity` (what `caffeinate -u` uses) wakes the display but does **not** reset the HID idle time that chat apps read: measured 95 s idle before the call, 96 s after. Resetting it means posting synthetic input events, which needs the Accessibility permission Keepwatch promises never to ask for. Not shipped.

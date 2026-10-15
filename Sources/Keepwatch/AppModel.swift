@@ -56,8 +56,6 @@ final class AppModel: ObservableObject {
     @Published var stopAwakeOnBattery: Bool { didSet { defaults.set(stopAwakeOnBattery, forKey: "stopAwakeOnBattery") } }
     /// Stop an ordinary keep-awake at low battery.
     @Published var stopAwakeOnLowBattery: Bool { didSet { defaults.set(stopAwakeOnLowBattery, forKey: "stopAwakeLow") } }
-    /// While keeping awake, tell macOS the user is active so chat apps don't show "away".
-    @Published var stayActive: Bool { didSet { defaults.set(stayActive, forKey: "stayActive") } }
     /// ⌃⌥⌘K starts or stops keep-awake from anywhere.
     @Published var hotkeyEnabled: Bool { didSet { defaults.set(hotkeyEnabled, forKey: "hotkey"); Hotkey.shared.setEnabled(hotkeyEnabled) } }
     /// Notify when the mic or camera turns on.
@@ -103,7 +101,6 @@ final class AppModel: ObservableObject {
         notifyAgentWaiting = defaults.object(forKey: "notifyAgentWaiting") as? Bool ?? true
         stopAwakeOnBattery = defaults.bool(forKey: "stopAwakeOnBattery")
         stopAwakeOnLowBattery = defaults.object(forKey: "stopAwakeLow") as? Bool ?? true
-        stayActive = defaults.bool(forKey: "stayActive")
         hotkeyEnabled = defaults.object(forKey: "hotkey") as? Bool ?? true
         alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
         // "micCamera" was one tile before 0.2; it is now two.
@@ -198,7 +195,6 @@ final class AppModel: ObservableObject {
         for event in decision.events { handle(event) }
 
         guardKeepAwake()
-        if stayActive, holding, tickCount % 30 == 0 { UserActivity.declare() }
         load = loadSampler.sample()
 
         let before = privacy

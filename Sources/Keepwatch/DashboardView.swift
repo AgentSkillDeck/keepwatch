@@ -65,8 +65,6 @@ struct DashboardView: View {
                           subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
                 SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                           isOn: $model.notifyWhenAgentsFinish)
-                SwitchRow(icon: "bubble.left.and.text.bubble.right", title: "Stay active in chat apps",
-                          subtitle: "Slack and Teams won't show you as away", isOn: $model.stayActive)
                 SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
                 SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
                 SwitchRow(icon: "command", title: "Shortcut ⌃⌥⌘K",

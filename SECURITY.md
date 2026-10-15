@@ -8,7 +8,7 @@ Include what you found, how to reproduce it, and the impact you expect. We will 
 
 ## What runs with administrator rights
 
-Only one thing, and only when you click **Start lid session** and enter your password:
+Only one thing, and only after you enter your password in the macOS prompt. The prompt appears when you click **Start lid session**, or when `keepwatch lid start` (run by you or an agent) asks the running app over a local distributed notification:
 
 - `pmset -a disablesleep 1`, and
 - a detached `/bin/sh` watchdog loop, built in `Sources/KeepwatchCore/LidSession.swift`, that turns sleep back on (`pmset -a disablesleep 0`) and, if the lid is shut, `pmset sleepnow`.
@@ -22,6 +22,11 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 - capture audio or video (it only asks the system whether the mic or camera is running);
 - read or write the TCC privacy database, or ask for Full Disk Access or Accessibility;
 - make network requests;
-- stop processes without your confirmation, or stop macOS's own processes.
+- stop macOS's own processes. In the app, Stop always asks first. `keepwatch agents stop PID` stops only a process that is an agent session (Claude Code, Codex…) of your own user, and re-checks that just before signalling it.
+
+## Other things it changes, only when you ask
+
+- **Reset camera access** runs Apple's `tccutil reset Camera` after a confirmation, so every app must ask again. It never reads or edits the privacy database itself.
+- The mic and camera history is a small JSON file in `~/Library/Application Support/Keepwatch/`, capped at 500 entries, never sent anywhere. **Clear** in the Privacy tab deletes it.
 
 A report that any of these guarantees can be broken is in scope.

@@ -1,6 +1,5 @@
 import Darwin
 import Foundation
-import IOKit.pwr_mgt
 
 // MARK: - Agent activity
 
@@ -215,22 +214,5 @@ public struct SystemLoadSampler: Sendable {
     static func percent(_ part: UInt64, of whole: UInt64) -> Int? {
         guard whole > 0 else { return nil }
         return Int(min(100, (Double(part) / Double(whole) * 100).rounded()))
-    }
-}
-
-// MARK: - Stay active
-
-/// Tells macOS the user is active, which resets the idle timer that chat apps
-/// use for "away". No input is faked and no permission is needed.
-public enum UserActivity {
-    /// Returns true if macOS accepted the declaration.
-    @discardableResult
-    public static func declare() -> Bool {
-        var id: IOPMAssertionID = 0
-        let r = IOPMAssertionDeclareUserActivity("Keepwatch: stay active" as CFString, kIOPMUserActiveLocal, &id)
-        guard r == kIOReturnSuccess else { return false }
-        // The declaration itself resets the idle timer; release the short-lived assertion.
-        IOPMAssertionRelease(id)
-        return true
     }
 }

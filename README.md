@@ -16,11 +16,19 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 ## What it does
 
 **Stay awake**
-- One click for 1 h, 3 h, or until you turn it off.
+- One click for 1 h, 3 h, 8 h, 1 day, or until you turn it off (∞).
+- **Custom:** any number of minutes, hours, days or weeks (up to 30 days), or **until** a date and time.
 - **While AI agents run** keeps the Mac awake only while Claude Code, Codex, Gemini CLI, Aider, OpenCode, Goose, Amp, Cursor Agent, Qwen Code or Crush is running. After the last one exits, it waits a 2-minute grace period, then lets the Mac sleep.
   - Claude Code's idle helpers (the pre-warmed `--bg-spare` process and `claude daemon`) don't count, so they can't keep the Mac awake forever.
 - A notification tells you when an agent finishes.
 - It shows which other apps are also holding the Mac awake (Amphetamine, caffeinate, and so on).
+- Optional: **stop when unplugged**, and **stop at 15% battery** (on by default).
+- **Shortcut ⌃⌥⌘K** turns keep-awake on or off from any app (no Accessibility permission needed).
+
+**Agents**
+- An **Agents** tab lists every session, grouped by assistant (Claude Code, Codex, Gemini CLI…), with its folder, when it started, and whether it is **working** or **idle** right now.
+- **Stop** one session or all sessions of an assistant, after a confirmation. Keepwatch checks the process is still that agent before it signals it.
+- A notification when an agent **goes quiet** after working: it may be done, or waiting for your answer.
 
 **Lid-closed sessions (beta)**
 
@@ -30,7 +38,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
   - sleep **N hours after the lid closes** (opening the lid resets the timer), and/or
   - sleep **at a set time** (for example, tonight at 1:00),
   - end **when all agents finish**,
-  - **never on battery** unless you allow it, and then it stops at 20%,
+  - on battery only above 20% (you can turn battery off entirely), and it stops at 20%,
   - a **12-hour hard cap** in every case.
 - It asks for your password **once**, when you start a session. That one admin command turns sleep off and starts a small root watchdog. The watchdog alone turns sleep back on and sleeps the Mac, so it works with the lid shut and even if Keepwatch crashes or quits.
 - Keepwatch ends a session early without a password (agents done, Mac running hot, you click End) by dropping a stop file that the watchdog checks every 30 s.
@@ -41,12 +49,17 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 **Privacy**
 - Live mic and camera indicators in the menu bar.
 - **Which app is using the mic**, from CoreAudio's process list (macOS 14+).
-- One-click **mic mute**.
+- A **mic switch** that mutes the mic for every app.
+- **Camera status** (macOS has no camera off switch for apps; this is honest about it), an alert when the mic or camera turns on, and **Reset camera access**, which makes every app ask again.
+- A **history** of when the mic and camera turned on and off, kept only on this Mac.
+- **Security checks** (read-only): firewall, FileVault, Gatekeeper, System Integrity Protection, AirDrop.
 - **Mute the mic when the lid closes**, and unmute it when the lid opens.
 - One-click links to the System Settings privacy lists: Camera, Microphone, Screen Recording, Accessibility, Full Disk Access, Automation, Location.
 - Keepwatch needs **no** mic, camera, Full Disk Access or Accessibility permission. It never captures anything; it only asks the system whether a device is running.
 
 **Dashboard**
+- A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security. Six to a row.
+- Tabs: Awake, Agents, Lid closed, Privacy, Security, Battery, Ports, Settings (⌘1–⌘8).
 - Battery charge, source, time left, **health** (% of original capacity), cycle count, Low Power Mode, thermal state and lid state.
 - **Listening ports**: your processes listening on TCP ports, with a confirmed Stop. Stop is hidden for macOS's own processes.
 - Quick settings: Dock autohide, show hidden files, show all file extensions.
@@ -59,10 +72,15 @@ Install it from the dashboard (**Install the keepwatch command**), then:
 ```sh
 keepwatch run -- npm test          # stay awake exactly while a command runs (exit status passes through)
 keepwatch awake --agents           # stay awake while Claude Code, Codex, … run
-keepwatch awake --minutes 90       # or --off
+keepwatch awake --for 3h           # 45m, 1h30m, 2d, 1w… (max 30 days); or --until 18:30, or --off
 keepwatch status --json            # power, sleep blockers, agents, mic/camera, lid
+keepwatch agents [--json]          # each session: agent, pid, folder, working or idle
+keepwatch agents stop PID          # quit one agent session
+keepwatch privacy [--json]         # mic and camera now, plus history
+keepwatch security [--json]        # firewall, FileVault, Gatekeeper, SIP, AirDrop
 keepwatch ports                    # what's listening on which port
-keepwatch lid end                  # end a lid session (starting one needs the app and your password)
+keepwatch lid start --hours 3      # asks the app; you type your password in the macOS prompt
+keepwatch lid end                  # end a lid session
 ```
 
 **Agent skill:** [`skills/keepwatch/SKILL.md`](skills/keepwatch/SKILL.md) teaches Claude Code, Codex and other agents to use it safely: `npx skills add AgentSkillDeck/keepwatch`.
@@ -70,7 +88,7 @@ keepwatch lid end                  # end a lid session (starting one needs the a
 **Automation (Shortcuts, Raycast, scripts)**
 
 ```sh
-open "keepwatch://awake?minutes=90"   # keep awake 90 min (max 24 h)
+open "keepwatch://awake?for=3h"       # keep awake 3 h (max 30 days); ?minutes=90 also works
 open "keepwatch://awake"              # until turned off
 open "keepwatch://awake/agents"       # while AI agents run
 open "keepwatch://awake/off"
@@ -79,25 +97,26 @@ open "keepwatch://lid/end"            # end a lid session (restores sleep)
 open "keepwatch://dashboard"
 ```
 
-Starting a lid session is deliberately **not** available by URL, so a web page can never put a password prompt in front of you.
+Starting a lid session is deliberately **not** available by URL, so a web page can never put a password prompt in front of you. `keepwatch lid start` uses a local channel instead, and still needs your password.
 
 ## Safety
 
 - Lid-closed mode changes a persistent system setting (`pmset disablesleep`). While the Mac is running, the watchdog's deadline, the 12 h cap, the battery rules and the thermal cut-out all end it.
 - **Known gap: a restart during a session.** `SleepDisabled` survives a reboot and the watchdog doesn't. Keepwatch spots this on its next launch (it compares boot time with the session start) and offers to turn sleep back on. Until Keepwatch is opened, though, the Mac won't sleep, so turn on **Open Keepwatch at login** if you use lid sessions. A privileged helper (roadmap) will close this gap.
-- No background admin prompts. The password is asked only when you click **Start lid session**.
+- The password is asked only when a lid session starts: when you click **Start lid session**, or when you or an agent run `keepwatch lid start`. Either way macOS shows its own prompt and only a person at the Mac can approve it.
 - Nothing reads TCC.db and no permission is granted silently.
 
 ## Build, sign, notarize
 
 ```sh
-swift test                      # 47 unit, shell-watchdog and live read-only tests
+swift test                      # 61 unit, shell-watchdog and live read-only tests
 scripts/build-app.sh            # dist/Keepwatch.app (universal)
 scripts/sign.sh                 # Developer ID + hardened runtime + timestamp
 # one-time: store notarization credentials in your keychain
 xcrun notarytool store-credentials keepwatch-notary --apple-id YOU@EXAMPLE.COM --team-id S99G3X6RPM
-scripts/notarize.sh [profile]   # notarize, staple, zip -> dist/Keepwatch-0.1.0.zip
-shasum -a 256 dist/Keepwatch-0.1.0.zip > dist/SHA256SUMS.txt
+scripts/notarize.sh [profile]   # notarize, staple, zip -> dist/Keepwatch-VERSION.zip
+scripts/make-dmg.sh [profile]   # signed, notarized, stapled dist/Keepwatch-VERSION.dmg
+(cd dist && shasum -a 256 Keepwatch-*.zip Keepwatch-*.dmg > SHA256SUMS.txt)
 ```
 
 To review the UI without a screen capture: `dist/Keepwatch.app/Contents/MacOS/Keepwatch --render-snapshots /tmp/kw` writes light and dark PNGs of the menu and dashboard.
