@@ -11,6 +11,17 @@
 
 A native macOS menu-bar app that keeps your Mac awake for AI coding agents, even with the lid closed, and keeps watch on your mic and camera.
 
+<p align="center">
+  <a href="https://agentskilldeck.github.io/keepwatch/#tour"><img src="docs/media/tour-poster.jpg" alt="Watch the 85-second Keepwatch tour (narrated)" width="820"></a>
+  <br><sub>▶ <a href="https://agentskilldeck.github.io/keepwatch/#tour">Watch the 85-second tour</a> · <a href="https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.2.0/keepwatch-tour.mp4">MP4</a></sub>
+</p>
+
+<p align="center">
+  <img src="docs/media/menu-dark.jpg" alt="The Keepwatch menu: privacy switches, keep-awake times, agents and lid-closed sessions" width="300">
+  &nbsp;
+  <img src="docs/media/tab-agents-dark.jpg" alt="The Agents tab: every coding-agent session, working or idle, with Stop" width="520">
+</p>
+
 Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon and Intel, is signed with a Developer ID, and is not sandboxed.
 
 ## What it does
@@ -49,10 +60,10 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
   - If something else turned sleep off, it says so.
 
 **Privacy**
-- Live mic and camera indicators in the menu bar.
+- A red **mic and camera badge** in the menu bar while either is live: <img src="docs/media/menubar-live.png" alt="menu-bar icon with the red mic and camera badge" height="22">
 - **Which app is using the mic**, from CoreAudio's process list (macOS 14+).
 - A **mic switch** that mutes the mic for every app.
-- **Camera status** (macOS has no camera off switch for apps; this is honest about it), an alert when the mic or camera turns on, and **Reset camera access**, which makes every app ask again.
+- **Camera status**, with **Turn off…** while it is live: macOS has no switch that turns the camera off for every app, so this opens the Camera list in System Settings, where switching an app off stops it using the camera. Also an alert when the mic or camera turns on, and **Reset camera access**, which makes every app ask again.
 - A **history** of when the mic and camera turned on and off, kept only on this Mac.
 - **Security checks** (read-only): firewall, FileVault, Gatekeeper, System Integrity Protection, AirDrop.
 - **Mute the mic when the lid closes**, and unmute it when the lid opens.

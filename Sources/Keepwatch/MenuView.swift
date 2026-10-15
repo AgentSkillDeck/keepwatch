@@ -193,6 +193,13 @@ struct PrivacySwitches: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
+                if model.privacy.cameraInUse {
+                    // macOS has no camera off switch; cutting an app's camera
+                    // permission is the real "stop", and it lives in Settings.
+                    Button("Turn off…") { model.open(.camera) }
+                        .controlSize(.small)
+                        .help("Opens the Camera list in System Settings. Switch the app off there to stop it using the camera.")
+                }
                 Text(model.privacy.cameraInUse ? "LIVE" : "OFF")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
                     .padding(.horizontal, 8).padding(.vertical, 3)

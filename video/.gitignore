@@ -1,0 +1,7 @@
+audio/out/
+audio/final/
+audio/sounds/*.ogg
+tour/assets/
+tour/renders/
+tour/.hyperframes/
+tour/node_modules/

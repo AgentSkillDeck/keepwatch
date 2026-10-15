@@ -88,6 +88,8 @@ final class AppModel: ObservableObject {
     private var systemAssertion = PowerAssertion(kind: .system, name: "Keepwatch: keeping your Mac awake")
     private var displayAssertion = PowerAssertion(kind: .display, name: "Keepwatch: keeping the display on")
     private var timer: Timer?
+    /// Set by `loadDemoData`; live refreshes are ignored from then on.
+    private var demo = false
     private var tickCount = 0
     private var activityTracker = AgentActivityTracker()
     private var loadSampler = SystemLoadSampler()
@@ -338,7 +340,7 @@ final class AppModel: ObservableObject {
         security = states
     }
 
-    private func setSecurity(_ states: [SecurityCheck: SecurityState]) { security = states }
+    private func setSecurity(_ states: [SecurityCheck: SecurityState]) { if !demo { security = states } }
 
     func open(_ check: SecurityCheck) {
         if let url = check.settingsURL { NSWorkspace.shared.open(url) }
@@ -522,7 +524,7 @@ final class AppModel: ObservableObject {
 
     // MARK: Ports
 
-    func refreshPorts() { ports = ListeningPorts.current() }
+    func refreshPorts() { if !demo { ports = ListeningPorts.current() } }
 
     /// Quits one agent session, after the UI asked the user to confirm.
     func stopAgent(_ session: AgentSession) {
@@ -538,9 +540,37 @@ final class AppModel: ObservableObject {
     }
 
     /// Synchronous read, for snapshot rendering only.
-    func refreshTopAppsNow() { topApps = TopApps.current(limit: 12) }
+    func refreshTopAppsNow() { if !demo { topApps = TopApps.current(limit: 12) } }
 
-    private func setTopApps(_ apps: [AppUsage]) { if apps != topApps { topApps = apps } }
+    /// Replaces live readings with `DemoData` for `--render-snapshots DIR --demo`.
+    /// Stops polling so nothing real comes back, and saves nothing.
+    func loadDemoData() {
+        demo = true
+        timer?.invalidate()
+        timer = nil
+        let now = Date()
+        let left: TimeInterval = 2 * 3_600 + 41 * 60
+        mode = .until(now.addingTimeInterval(left))
+        remaining = left
+        timedLength = 3 * 3_600
+        holding = true
+        autoReason = nil
+        agentSessions = DemoData.agentSessions(now: now)
+        agents = Dictionary(grouping: agentSessions, by: \.agent).mapValues(\.count)
+        agentActivity = DemoData.activity
+        privacy = DemoData.privacy
+        privacyLog = DemoData.privacyLog(now: now)
+        power = DemoData.power
+        pmset = DemoData.pmset
+        load = DemoData.load
+        batteryHistory = DemoData.batteryHistory(now: now)
+        ports = DemoData.ports
+        topApps = DemoData.apps
+        security = DemoData.security
+        lidIntent = .off
+    }
+
+    private func setTopApps(_ apps: [AppUsage]) { if !demo, apps != topApps { topApps = apps } }
 
     /// Quits an app politely (like ⌘Q), after the UI confirmed. Plain tools get SIGTERM.
     /// Never macOS's own processes or Keepwatch itself.
