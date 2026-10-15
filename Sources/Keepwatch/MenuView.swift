@@ -89,10 +89,10 @@ struct StatusHeader: View {
     }
 
     private var subtitle: String {
-        if model.lidIntent.enabled { return "Runs with the lid closed, then sleeps by itself" }
+        if model.lidIntent.enabled { return "Keeps working with the lid shut" }
         guard model.holding else {
-            if case .whileAgentsRun = model.mode { return "Stays awake as soon as an agent starts" }
-            return "Your Mac sleeps on its usual schedule"
+            if case .whileAgentsRun = model.mode { return "Stays awake when an agent starts" }
+            return "Your Mac sleeps as usual"
         }
         switch model.mode {
         case .until(let end):
@@ -186,7 +186,7 @@ struct PrivacySwitches: View {
                           tint: model.privacy.cameraInUse ? Brand.live : Brand.teal)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Camera").font(.system(size: 13, weight: .medium))
-                    Text(model.privacy.cameraInUse ? "An app is using it now" : "Off: no app is using it")
+                    Text(model.privacy.cameraInUse ? "In use" : "Not in use")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -197,11 +197,11 @@ struct PrivacySwitches: View {
                     .background((model.privacy.cameraInUse ? Brand.live : Color.primary).opacity(0.12), in: Capsule())
             }
             .help("macOS has no switch that turns the camera off for every app. Keepwatch shows when it's on and can alert you.")
-            SwitchRow(icon: "bell.badge", title: "Alert when mic or camera turns on",
-                      subtitle: "A notification names the app using the mic", isOn: $model.alertOnMicCamera)
+            SwitchRow(icon: "bell.badge", title: "Alert me",
+                      subtitle: "When the mic or camera turns on", isOn: $model.alertOnMicCamera)
             if !compact {
-                SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute the mic when the lid closes",
-                          subtitle: "Unmutes again when you open it", isOn: $model.muteMicWhenLidCloses)
+                SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute mic when lid closes",
+                          subtitle: "Unmutes when you open it", isOn: $model.muteMicWhenLidCloses)
             }
         }
     }
@@ -212,13 +212,13 @@ struct PrivacySwitches: View {
     }
 
     private var micStatus: String {
-        if model.privacy.micMuted == nil { return "No input device" }
-        if model.privacy.micMuted == true { return "Muted for every app" }
+        if model.privacy.micMuted == nil { return "No mic found" }
+        if model.privacy.micMuted == true { return "Muted" }
         if model.privacy.micInUse {
             let who = model.privacy.micUsers.map { model.appName(for: $0) }
-            return who.isEmpty ? "Live now" : "Live: " + who.joined(separator: ", ")
+            return who.isEmpty ? "In use" : "In use by " + who.joined(separator: ", ")
         }
-        return "On, not in use"
+        return "Not in use"
     }
 }
 
@@ -369,9 +369,9 @@ struct LidSessionCard: View {
                 HStack(spacing: 10) {
                     IconBadge(icon: "laptopcomputer", tint: Brand.teal)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(model.lidHours > 0 ? "Sleep \(Format.hours(model.lidHours)) after the lid closes" : "No lid-closed limit")
+                        Text(model.lidHours > 0 ? "Sleep \(Format.hours(model.lidHours)) after the lid closes" : "No time limit")
                             .font(.system(size: 13, weight: .medium))
-                        Text("Agents keep running with the lid shut. Asks for your password once.")
+                        Text("Keeps working with the lid shut. Needs your password once.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -380,15 +380,15 @@ struct LidSessionCard: View {
                 }
                 if !compact {
                     SwitchRow(icon: "alarm", title: "Also sleep at a set time",
-                              subtitle: model.lidSleepAtEnabled ? nil : "For example 1:00 at night", isOn: $model.lidSleepAtEnabled)
+                              subtitle: model.lidSleepAtEnabled ? nil : "Like 1:00 at night", isOn: $model.lidSleepAtEnabled)
                     if model.lidSleepAtEnabled {
                         DatePicker("Sleep at", selection: $model.lidSleepAt, displayedComponents: [.date, .hourAndMinute])
                             .padding(.leading, 38)
                     }
                     SwitchRow(icon: "battery.50percent", title: "Allow on battery", subtitle: "Stops at 20%",
                               isOn: $model.lidAllowBattery)
-                    SwitchRow(icon: "flag.checkered", title: "End when all agents finish",
-                              subtitle: "Then the Mac sleeps right away", isOn: $model.endLidSessionWhenAgentsFinish)
+                    SwitchRow(icon: "flag.checkered", title: "Stop when agents are done",
+                              subtitle: "Then the Mac sleeps", isOn: $model.endLidSessionWhenAgentsFinish)
                 }
                 if !compact && !model.launchAtLogin {
                     Text("Tip: turn on “Open Keepwatch at login”. If the Mac restarts mid-session, that lets Keepwatch turn sleep back on.")

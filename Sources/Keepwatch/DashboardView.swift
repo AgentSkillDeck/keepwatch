@@ -59,9 +59,9 @@ struct DashboardView: View {
         case .awake:
             Card("Stay awake", icon: "eye.fill") {
                 AwakeControls()
-                SwitchRow(icon: "display", title: "Keep the display on too",
-                          subtitle: "Otherwise the screen dims as usual", isOn: $model.keepDisplayAwake)
-                SwitchRow(icon: "bell.badge", title: "Notify me when an agent finishes",
+                SwitchRow(icon: "display", title: "Keep screen on",
+                          subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
+                SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                           isOn: $model.notifyWhenAgentsFinish)
                 if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
                     Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
@@ -75,7 +75,7 @@ struct DashboardView: View {
                 PrivacySwitches(compact: false)
                 CameraResetRow()
                 Divider()
-                Eyebrow(text: "Who can use what · opens System Settings")
+                Eyebrow(text: "App permissions")
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
                     ForEach(PrivacyPane.allCases, id: \.self) { pane in
                         Button { model.open(pane) } label: {
@@ -158,8 +158,8 @@ struct CameraResetRow: View {
         HStack(spacing: 10) {
             IconBadge(icon: "arrow.counterclockwise", tint: .orange)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Make every app ask again for the camera").font(.system(size: 13, weight: .medium))
-                Text("macOS has no camera off switch; this is the closest thing").font(.caption).foregroundStyle(.secondary)
+                Text("Reset camera access").font(.system(size: 13, weight: .medium))
+                Text("Every app must ask again to use it").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             Button("Reset…") { confirming = true }.controlSize(.small)
@@ -309,7 +309,7 @@ struct SecurityList: View {
                     }
                 }
             }
-            Text("Read-only: Keepwatch shows these and opens the right settings; it never changes them.")
+            Text("Keepwatch only shows these. Tap › to change one in System Settings.")
                 .font(.caption).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -428,7 +428,7 @@ struct PortsList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.ports.isEmpty {
-                Text("Nothing of yours is listening.").font(.callout).foregroundStyle(.secondary)
+                Text("No open ports.").font(.callout).foregroundStyle(.secondary)
             }
             ForEach(model.ports.prefix(40), id: \.self) { p in
                 HStack(spacing: 10) {
@@ -439,7 +439,7 @@ struct PortsList: View {
                         .frame(width: 58, alignment: .leading)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(p.process).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                        Text(p.address == "*" ? "Open to your network" : "This Mac only (\(p.address))")
+                        Text(p.address == "*" ? "Open to network" : "This Mac only")
                             .font(.caption).foregroundStyle(p.address == "*" && !p.isSystem ? Color.orange : Color.secondary)
                     }
                     Spacer(minLength: 8)
