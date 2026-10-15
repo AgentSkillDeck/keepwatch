@@ -15,6 +15,9 @@ final class AppModel: ObservableObject {
 
     @Published private(set) var mode: KeepAwakeMode = .off
     @Published private(set) var remaining: TimeInterval?
+    /// Full length of the current timed session, for the progress ring. Nil if
+    /// unknown (a session restored from before a relaunch).
+    @Published private(set) var timedLength: TimeInterval?
     @Published private(set) var holding = false
     @Published private(set) var agents: [String: Int] = [:]
     @Published private(set) var privacy = PrivacySnapshot.idle
@@ -25,6 +28,7 @@ final class AppModel: ObservableObject {
     @Published var banner: Banner?
     @Published private(set) var toggles: [QuickToggle: Bool] = [:]
     @Published private(set) var ports: [ListeningPort] = []
+    @Published private(set) var security: [SecurityCheck: SecurityState] = [:]
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     // MARK: Preferences
@@ -37,6 +41,11 @@ final class AppModel: ObservableObject {
     @Published var lidAllowBattery: Bool { didSet { defaults.set(lidAllowBattery, forKey: "lidBattery") } }
     @Published var lidSleepAtEnabled: Bool { didSet { defaults.set(lidSleepAtEnabled, forKey: "lidSleepAtOn") } }
     @Published var lidSleepAt: Date { didSet { defaults.set(lidSleepAt, forKey: "lidSleepAt") } }
+    /// The last custom keep-awake length, so "Custom" opens where you left it.
+    /// Notify when the mic or camera turns on.
+    @Published var alertOnMicCamera: Bool { didSet { defaults.set(alertOnMicCamera, forKey: "alertMicCamera") } }
+    @Published var customAmount: Double { didSet { defaults.set(customAmount, forKey: "customAmount") } }
+    @Published var customUnit: AwakeDuration.Unit { didSet { defaults.set(customUnit.rawValue, forKey: "customUnit") } }
 
     struct Banner: Identifiable, Equatable {
         let id = UUID()
@@ -71,6 +80,9 @@ final class AppModel: ObservableObject {
         lidSleepAtEnabled = defaults.bool(forKey: "lidSleepAtOn")
         lidSleepAt = defaults.object(forKey: "lidSleepAt") as? Date
             ?? LidSessionPlan.nextTime(hour: 1, minute: 0, after: Date()) ?? Date()
+        alertOnMicCamera = defaults.object(forKey: "alertMicCamera") as? Bool ?? true
+        customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
+        customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours
         lidIntent = (defaults.data(forKey: "lidIntent")).flatMap { try? JSONDecoder().decode(LidModeIntent.self, from: $0) } ?? .off
         if let data = defaults.data(forKey: "mode"), let saved = try? JSONDecoder().decode(KeepAwakeMode.self, from: data) {
             // A timer that ran out while we were closed comes back as off.
@@ -88,13 +100,41 @@ final class AppModel: ObservableObject {
     // MARK: Keep awake
 
     func setMode(_ newMode: KeepAwakeMode) {
+        if case .until(let end) = newMode { timedLength = end.timeIntervalSinceNow } else { timedLength = nil }
         engine.set(newMode)
         mode = engine.mode
         if let data = try? JSONEncoder().encode(newMode) { defaults.set(data, forKey: "mode") }
         tick()
     }
 
-    func keepAwake(for seconds: TimeInterval) { setMode(.until(Date().addingTimeInterval(seconds))) }
+    func keepAwake(for seconds: TimeInterval) {
+        guard seconds.isFinite, seconds > 0 else { return }
+        setMode(.until(Date().addingTimeInterval(min(seconds, AwakeDuration.maxSeconds))))
+    }
+
+    /// Keep awake for the custom amount and unit chosen in the menu.
+    func keepAwakeCustom() {
+        if let seconds = AwakeDuration.seconds(customAmount, customUnit) { keepAwake(for: seconds) }
+    }
+
+    /// Keep awake until a clock time (today, or tomorrow if it has passed).
+    func keepAwake(until date: Date) {
+        let now = Date()
+        var end = date
+        if end <= now {
+            let hm = Calendar.current.dateComponents([.hour, .minute], from: date)
+            guard let next = Calendar.current.nextDate(after: now, matching: DateComponents(hour: hm.hour, minute: hm.minute, second: 0),
+                                                       matchingPolicy: .nextTime) else { return }
+            end = next
+        }
+        keepAwake(for: end.timeIntervalSince(now))
+    }
+
+    /// The preset length the current timed session was started with, if any.
+    var timedPreset: TimeInterval? {
+        guard case .until = mode, let timedLength else { return nil }
+        return timedLength
+    }
 
     private func apply() {
         if holding {
@@ -117,8 +157,11 @@ final class AppModel: ObservableObject {
         apply()
         for event in decision.events { handle(event) }
 
+        let before = privacy
         privacy = PrivacyMonitor.snapshot()
+        if tickCount > 1 { alertIfPrivacyChanged(from: before) }
         if tickCount % 5 == 1 { refreshSlow() }
+        if tickCount % 30 == 1 { refreshSecurity() }
         handleLidTransition()
         superviseLidSession(now: now)
     }
@@ -155,7 +198,45 @@ final class AppModel: ObservableObject {
         }
     }
 
-    // MARK: Mic
+    // MARK: Mic, camera and security
+
+    private func alertIfPrivacyChanged(from before: PrivacySnapshot) {
+        guard alertOnMicCamera else { return }
+        if privacy.micInUse && !before.micInUse {
+            let who = privacy.micUsers.map { appName(for: $0) }.joined(separator: ", ")
+            notify("Microphone turned on", who.isEmpty ? "An app started using your microphone." : "In use by \(who).")
+        }
+        if privacy.cameraInUse && !before.cameraInUse {
+            notify("Camera turned on", "An app started using your camera.")
+        }
+    }
+
+    /// Reads the security checks off the main thread; each one runs a small system tool.
+    func refreshSecurity() {
+        Task.detached(priority: .utility) { [weak self] in
+            var states: [SecurityCheck: SecurityState] = [:]
+            for check in SecurityCheck.allCases { states[check] = check.read() }
+            await self?.setSecurity(states)
+        }
+    }
+
+    /// Synchronous read, for snapshot rendering only.
+    func refreshSecurityNow() {
+        var states: [SecurityCheck: SecurityState] = [:]
+        for check in SecurityCheck.allCases { states[check] = check.read() }
+        security = states
+    }
+
+    private func setSecurity(_ states: [SecurityCheck: SecurityState]) { security = states }
+
+    func open(_ check: SecurityCheck) {
+        if let url = check.settingsURL { NSWorkspace.shared.open(url) }
+    }
+
+    func setMicMuted(_ muted: Bool) {
+        guard privacy.micMuted != nil, privacy.micMuted != muted else { return }
+        toggleMicMute()
+    }
 
     func toggleMicMute() {
         guard let muted = privacy.micMuted else { return }

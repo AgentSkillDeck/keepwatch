@@ -88,11 +88,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 enum Snapshots {
     static func render(model: AppModel, to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        model.refreshSecurityNow()
         for scheme in [ColorScheme.light, .dark] {
             let suffix = scheme == .dark ? "dark" : "light"
             write(MenuView().environmentObject(model), dir.appendingPathComponent("menu-\(suffix).png"), scheme)
             write(DashboardView().environmentObject(model), dir.appendingPathComponent("dashboard-\(suffix).png"), scheme)
         }
+        // The menu while a timed session runs, then put the user's own mode back.
+        let saved = model.mode
+        model.keepAwake(for: 3 * 3_600)
+        model.tick()
+        write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
+        model.setMode(saved)
     }
 
     /// Hosts the view in an offscreen window and caches its display, so

@@ -1,22 +1,25 @@
 import KeepwatchCore
 import SwiftUI
 
-/// The full window: every control in one place, grouped in cards.
+/// The full window: a status summary, then every control grouped in cards.
 struct DashboardView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
+                SummaryHeader()
                 if let banner = model.banner { BannerView(banner: banner) }
                 HStack(alignment: .top, spacing: 16) {
                     VStack(spacing: 16) {
-                        Card("Stay awake", icon: "eye") {
+                        Card("Stay awake", icon: "eye.fill") {
                             AwakeControls()
-                            Toggle("Keep the display on too", isOn: $model.keepDisplayAwake)
-                            Toggle("Notify me when an agent finishes", isOn: $model.notifyWhenAgentsFinish)
+                            SwitchRow(icon: "display", title: "Keep the display on too",
+                                      subtitle: "Otherwise the screen dims as usual", isOn: $model.keepDisplayAwake)
+                            SwitchRow(icon: "bell.badge", title: "Notify me when an agent finishes",
+                                      isOn: $model.notifyWhenAgentsFinish)
                             if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
-                                Text("Also keeping your Mac awake: \(others.joined(separator: ", "))")
+                                Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                         }
@@ -26,39 +29,151 @@ struct DashboardView: View {
                         Card("Listening ports", icon: "network") { PortsList() }
                     }
                     VStack(spacing: 16) {
-                        Card("Privacy", icon: "hand.raised") {
-                            PrivacyStrip()
-                            Toggle("Mute the mic when the lid closes", isOn: $model.muteMicWhenLidCloses)
-                            Text("Open the permission lists in System Settings:")
-                                .font(.caption).foregroundStyle(.secondary)
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 6) {
-                                ForEach(PrivacyPane.allCases.filter { $0 != .loginItems }, id: \.self) { pane in
-                                    Button(pane.title) { model.open(pane) }
-                                        .buttonStyle(.link)
-                                        .font(.callout)
+                        Card("Privacy", icon: "hand.raised.fill") {
+                            PrivacySwitches(compact: false)
+                            Divider()
+                            Eyebrow(text: "Who can use what · opens System Settings")
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                                ForEach(PrivacyPane.allCases, id: \.self) { pane in
+                                    Button { model.open(pane) } label: {
+                                        VStack(spacing: 5) {
+                                            Image(systemName: pane.icon).font(.system(size: 15, weight: .semibold))
+                                                .foregroundStyle(Brand.teal)
+                                            Text(pane.shortTitle).font(.system(size: 10.5, weight: .medium))
+                                                .lineLimit(1).minimumScaleFactor(0.8)
+                                        }
+                                    }
+                                    .buttonStyle(TileButtonStyle(selected: false))
+                                    .help("Open \(pane.title) in System Settings")
                                 }
                             }
                         }
-                        Card("Battery & power", icon: "bolt") { PowerFacts() }
+                        Card("Security", icon: "checkmark.shield.fill") { SecurityList() }
+                        Card("Battery & power", icon: "bolt.fill") { PowerFacts() }
                         Card("Quick settings", icon: "slider.horizontal.3") {
                             ForEach(QuickToggle.allCases) { t in
-                                Toggle(t.title, isOn: Binding(get: { model.toggles[t] ?? false },
-                                                              set: { model.setToggle(t, $0) }))
+                                SwitchRow(icon: t.icon, title: t.title,
+                                          isOn: Binding(get: { model.toggles[t] ?? false }, set: { model.setToggle(t, $0) }))
                             }
-                            Divider()
-                            Toggle("Open Keepwatch at login", isOn: Binding(get: { model.launchAtLogin },
-                                                                             set: { model.setLaunchAtLogin($0) }))
-                            Button("Manage all login items…") { model.open(.loginItems) }
-                                .buttonStyle(.link)
-                            Button("Install the `keepwatch` command for Terminal and AI agents") { model.installCLI() }
-                                .buttonStyle(.link)
+                            SwitchRow(icon: "power.circle", title: "Open Keepwatch at login",
+                                      isOn: Binding(get: { model.launchAtLogin }, set: { model.setLaunchAtLogin($0) }))
+                            HStack {
+                                Button("Manage login items…") { model.open(.loginItems) }
+                                Button("Install the keepwatch command") { model.installCLI() }
+                                    .help("For Terminal and AI agents")
+                            }
+                            .controlSize(.small)
                         }
                     }
                 }
             }
             .padding(20)
         }
-        .frame(width: 760, height: 720)
+        .frame(width: 820, height: 760)
+        .onAppear { model.refreshSecurity() }
+    }
+}
+
+/// The big status and the numbers worth a glance.
+struct SummaryHeader: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            StatusHeader(large: true)
+            HStack(spacing: 12) {
+            StatTile(value: model.power?.batteryPercent.map { "\($0)%" } ?? "–",
+                     caption: model.power.map { $0.onBattery ? "On battery" : "Plugged in" } ?? "Battery",
+                     icon: model.power?.onBattery == false ? "powerplug.fill" : "battery.75percent")
+            StatTile(value: model.power?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
+            StatTile(value: "\(model.agents.count)", caption: model.agents.count == 1 ? "Agent running" : "Agents running",
+                     icon: "terminal.fill")
+            StatTile(value: model.privacy.micInUse || model.privacy.cameraInUse ? "Live" : "Off",
+                     caption: "Mic & camera", icon: "video.fill",
+                     tint: model.privacy.micInUse || model.privacy.cameraInUse ? Brand.live : Brand.teal)
+            }
+        }
+        .padding(18)
+        .background(
+            LinearGradient(colors: [Brand.teal.opacity(0.18), Brand.teal.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Brand.teal.opacity(0.25)))
+    }
+}
+
+/// Firewall, FileVault, Gatekeeper, SIP and AirDrop, each with a status pill.
+struct SecurityList: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(spacing: 8) {
+            ForEach(SecurityCheck.allCases) { check in
+                let state = model.security[check] ?? .unknown
+                HStack(spacing: 10) {
+                    IconBadge(icon: check.icon, tint: tint(state))
+                    Text(check.title).font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Text(state.label)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .foregroundStyle(tint(state))
+                        .background(tint(state).opacity(0.14), in: Capsule())
+                    if check.settingsURL != nil {
+                        Button { model.open(check) } label: { Image(systemName: "chevron.right") }
+                            .buttonStyle(.borderless)
+                            .help("Open in System Settings")
+                    } else {
+                        Image(systemName: "chevron.right").opacity(0)
+                    }
+                }
+            }
+            Text("Read-only: Keepwatch shows these and opens the right settings; it never changes them.")
+                .font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func tint(_ state: SecurityState) -> Color {
+        switch state {
+        case .good: Brand.teal
+        case .weak: .orange
+        case .unknown: .secondary
+        }
+    }
+}
+
+extension PrivacyPane {
+    var icon: String {
+        switch self {
+        case .camera: "video.fill"
+        case .microphone: "mic.fill"
+        case .screenRecording: "rectangle.dashed.badge.record"
+        case .accessibility: "accessibility"
+        case .fullDiskAccess: "externaldrive.fill"
+        case .automation: "gearshape.2.fill"
+        case .location: "location.fill"
+        case .loginItems: "power.circle"
+        }
+    }
+
+    var shortTitle: String {
+        switch self {
+        case .screenRecording: "Screen"
+        case .fullDiskAccess: "Disk"
+        case .location: "Location"
+        case .loginItems: "Login items"
+        default: title
+        }
+    }
+}
+
+extension QuickToggle {
+    var icon: String {
+        switch self {
+        case .dockAutohide: "dock.rectangle"
+        case .showHiddenFiles: "eye.square"
+        case .showFileExtensions: "doc.text"
+        }
     }
 }
 
@@ -114,13 +229,10 @@ struct Card<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(title, systemImage: icon).font(.headline)
+        Panel(padding: 16) {
+            SectionHeader(icon: icon, title: title)
             content
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
     }
 }
 
