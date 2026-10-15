@@ -67,8 +67,8 @@ struct DashboardView: View {
                           isOn: $model.notifyWhenAgentsFinish)
                 SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
                 SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
-                SwitchRow(icon: "command", title: "Shortcut ⌃⌥⌘K",
-                          subtitle: "Turns keep-awake on or off from any app", isOn: $model.hotkeyEnabled)
+                SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
+                          subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
                 if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
                     Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
                         .font(.caption).foregroundStyle(.secondary)

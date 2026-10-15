@@ -27,6 +27,9 @@ struct MenuView: View {
                 }
                 .keyboardShortcut(",")
                 Spacer()
+                Button { Screenshot.openToolbar() } label: { Label("Screenshot", systemImage: "camera.viewfinder") }
+                    .help("Area, window, screen or video, with Markup to edit (⌃⌥⌘S)")
+                Spacer()
                 Button { model.quit() } label: { Label("Quit", systemImage: "power") }
             }
             .buttonStyle(.borderless)

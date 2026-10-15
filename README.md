@@ -24,6 +24,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 - It shows which other apps are also holding the Mac awake (Amphetamine, caffeinate, and so on).
 - Optional: **stop when unplugged**, and **stop at 15% battery** (on by default).
 - **Shortcut ⌃⌥⌘K** turns keep-awake on or off from any app (no Accessibility permission needed).
+- **Screenshot (⌃⌥⌘S, or the menu button)** opens Apple's screenshot toolbar: an area, a window or the whole screen, as a picture or a video, with Markup to edit it. Apple's app does the capture, so Keepwatch needs no Screen Recording permission.
 
 **Agents**
 - An **Agents** tab lists every session, grouped by assistant (Claude Code, Codex, Gemini CLI…), with its folder, when it started, and whether it is **working** or **idle** right now.
