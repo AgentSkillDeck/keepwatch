@@ -27,7 +27,7 @@ struct KeepwatchApp: App {
 }
 
 /// The menu-bar icon: an eye that opens when Keepwatch is holding the Mac
-/// awake, plus a mic and/or camera glyph while either is live.
+/// awake, plus a red mic and/or camera badge while either is live.
 struct MenuBarLabel: View {
     var holding: Bool
     var lidSession: Bool
@@ -37,8 +37,7 @@ struct MenuBarLabel: View {
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: lidSession ? "laptopcomputer" : (holding ? "eye.fill" : "eye"))
-            if mic { Image(systemName: "mic.fill") }
-            if camera { Image(systemName: "video.fill") }
+            if let badge = PrivacyBadge.image(mic: mic, camera: camera) { Image(nsImage: badge) }
         }
         .accessibilityLabel(accessibilityText)
     }
@@ -48,6 +47,37 @@ struct MenuBarLabel: View {
         if mic { parts.append("microphone in use") }
         if camera { parts.append("camera in use") }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// A red pill with white mic and camera glyphs. It is not a template image,
+/// so the menu bar keeps its colour, like the system's own privacy dot.
+enum PrivacyBadge {
+    static let red = NSColor(red: 1.0, green: 0.27, blue: 0.23, alpha: 1)
+
+    static func image(mic: Bool, camera: Bool) -> NSImage? {
+        let names = (mic ? ["mic.fill"] : []) + (camera ? ["video.fill"] : [])
+        let config = NSImage.SymbolConfiguration(pointSize: 10, weight: .bold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.white]))
+        let glyphs = names.compactMap {
+            NSImage(systemSymbolName: $0, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        }
+        guard !glyphs.isEmpty else { return nil }
+        let pad: CGFloat = 5, gap: CGFloat = 3, height: CGFloat = 16
+        let width = glyphs.reduce(pad * 2) { $0 + $1.size.width } + gap * CGFloat(glyphs.count - 1)
+        let image = NSImage(size: NSSize(width: width, height: height), flipped: false) { rect in
+            red.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: height / 2, yRadius: height / 2).fill()
+            var x = pad
+            for glyph in glyphs {
+                let size = glyph.size
+                glyph.draw(in: NSRect(x: x, y: (height - size.height) / 2, width: size.width, height: size.height))
+                x += size.width + gap
+            }
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 }
 
@@ -63,7 +93,7 @@ struct WindowOpenerBridge: View {
     }
 }
 
-/// Handles `keepwatch://` URLs and the `--render-snapshots DIR` launch flag.
+/// Handles `keepwatch://` URLs and the `--render-snapshots DIR [--demo]` launch flags.
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         if Bundle.main.bundleIdentifier != nil {
@@ -77,7 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if let i = args.firstIndex(of: "--render-snapshots"), args.indices.contains(i + 1) {
             let dir = URL(fileURLWithPath: args[i + 1], isDirectory: true)
             Task { @MainActor in
-                Snapshots.render(model: AppModel.shared, to: dir)
+                Snapshots.render(model: AppModel.shared, to: dir, demo: args.contains("--demo"))
                 NSApp.terminate(nil)
             }
         }
@@ -109,27 +139,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 /// Screen Recording permission.
 @MainActor
 enum Snapshots {
-    static func render(model: AppModel, to dir: URL) {
+    /// With `demo`, every view shows `DemoData` instead of this Mac's own
+    /// apps, folders and ports, for pictures that are safe to publish.
+    static func render(model: AppModel, to dir: URL, demo: Bool = false) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        model.refreshSecurityNow()
+        if demo { model.loadDemoData() } else { model.refreshSecurityNow() }
         for scheme in [ColorScheme.light, .dark] {
             let suffix = scheme == .dark ? "dark" : "light"
             write(MenuView().environmentObject(model), dir.appendingPathComponent("menu-\(suffix).png"), scheme)
             write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-\(suffix).png"), scheme)
         }
-        // The menu while a timed session runs, then put the user's own mode back.
-        let saved = model.mode
-        model.keepAwake(for: 3 * 3_600)
-        model.tick()
-        write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
-        model.setMode(saved)
-        model.refreshPorts()
-        model.refreshTopAppsNow()
+        if demo {
+            write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
+        } else {
+            // The menu while a timed session runs, then put the user's own mode back.
+            let saved = model.mode
+            model.keepAwake(for: 3 * 3_600)
+            model.tick()
+            write(MenuView(customOpen: true).environmentObject(model), dir.appendingPathComponent("menu-awake-dark.png"), .dark)
+            model.setMode(saved)
+            model.refreshPorts()
+            model.refreshTopAppsNow()
+        }
         let tiles = model.summaryTiles
         model.summaryTiles = SummaryTile.allCases
         write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-all-tiles-dark.png"), .dark)
         model.summaryTiles = tiles
-        for tab in [DashboardTab.agents, .privacy, .security, .ports, .power, .settings] {
+        write(MenuBarLabel(holding: true, lidSession: false, mic: true, camera: true).padding(6),
+              dir.appendingPathComponent("menubar-live-dark.png"), .dark)
+        for tab in [DashboardTab.agents, .lid, .privacy, .security, .ports, .power, .settings] {
             write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(tab.rawValue)-dark.png"), .dark)
         }
     }
