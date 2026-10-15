@@ -20,6 +20,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var timedLength: TimeInterval?
     @Published private(set) var holding = false
     @Published private(set) var agents: [String: Int] = [:]
+    @Published private(set) var agentSessions: [AgentSession] = []
     @Published private(set) var privacy = PrivacySnapshot.idle
     @Published private(set) var power: PowerState?
     @Published private(set) var pmset: PMSet.Settings?
@@ -158,7 +159,10 @@ final class AppModel: ObservableObject {
     func tick() {
         tickCount += 1
         let now = Date()
-        agents = matcher.runningAgents(in: ProcessList.snapshot(wantArguments: matcher.isCandidate))
+        let processes = ProcessList.snapshot(wantArguments: matcher.isCandidate)
+        agents = matcher.runningAgents(in: processes)
+        let sessions = matcher.sessions(in: processes)
+        if sessions != agentSessions { agentSessions = sessions }
         let decision = engine.tick(now: now, agents: Set(agents.keys))
         mode = engine.mode
         remaining = decision.remaining
@@ -406,6 +410,12 @@ final class AppModel: ObservableObject {
     // MARK: Ports
 
     func refreshPorts() { ports = ListeningPorts.current() }
+
+    /// Quits one agent session, after the UI asked the user to confirm.
+    func stopAgent(_ session: AgentSession) {
+        _ = matcher.stop(session, current: ProcessList.snapshot(wantArguments: matcher.isCandidate))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
+    }
 
     func stopProcess(_ port: ListeningPort) {
         ListeningPorts.stop(pid: port.pid)

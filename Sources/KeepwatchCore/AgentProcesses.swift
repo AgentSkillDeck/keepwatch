@@ -140,3 +140,70 @@ extension ProcessList {
         return Array(args.dropFirst()) // drop argv[0]
     }
 }
+
+/// One running agent session, for the Agents tab.
+public struct AgentSession: Equatable, Hashable, Identifiable, Sendable {
+    public var pid: Int32
+    public var agent: String
+    /// The session's working directory, if readable.
+    public var folder: String?
+    public var started: Date?
+    public var id: Int32 { pid }
+
+    public init(pid: Int32, agent: String, folder: String? = nil, started: Date? = nil) {
+        self.pid = pid; self.agent = agent; self.folder = folder; self.started = started
+    }
+
+    /// Last path component of the folder, or "~" for the home folder.
+    public var folderName: String? {
+        guard let folder else { return nil }
+        if folder == NSHomeDirectory() { return "~" }
+        let name = (folder as NSString).lastPathComponent
+        return name.isEmpty ? folder : name
+    }
+}
+
+extension AgentMatcher {
+    /// Every agent session in `processes`, oldest first, with folder and start
+    /// time from `details`.
+    public func sessions(in processes: [RunningProcess],
+                         details: (Int32) -> (folder: String?, started: Date?) = { ProcessList.details(of: $0) }) -> [AgentSession] {
+        processes.compactMap { p -> AgentSession? in
+            guard let agent = agentName(for: p) else { return nil }
+            let d = details(p.pid)
+            return AgentSession(pid: p.pid, agent: agent, folder: d.folder, started: d.started)
+        }
+        .sorted { ($0.started ?? .distantFuture, $0.pid) < ($1.started ?? .distantFuture, $1.pid) }
+    }
+
+    /// Ends a session with a normal quit signal, but only if `pid` is still
+    /// that agent (a pid can be reused after the process exits). Never this app.
+    public func stop(_ session: AgentSession, current: [RunningProcess]) -> Bool {
+        guard session.pid > 1, session.pid != getpid(),
+              let p = current.first(where: { $0.pid == session.pid }),
+              agentName(for: p) == session.agent else { return false }
+        return kill(session.pid, SIGTERM) == 0
+    }
+}
+
+extension ProcessList {
+    /// Working directory and start time of a process we own; nil for either we can't read.
+    public static func details(of pid: Int32) -> (folder: String?, started: Date?) {
+        var folder: String?
+        var vnode = proc_vnodepathinfo()
+        let vsize = Int32(MemoryLayout<proc_vnodepathinfo>.size)
+        if proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &vnode, vsize) == vsize {
+            folder = withUnsafeBytes(of: vnode.pvi_cdir.vip_path) { raw in
+                let bytes = raw.prefix { $0 != 0 }
+                return bytes.isEmpty ? nil : String(decoding: bytes, as: UTF8.self)
+            }
+        }
+        var started: Date?
+        var bsd = proc_bsdinfo()
+        let bsize = Int32(MemoryLayout<proc_bsdinfo>.size)
+        if proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, bsize) == bsize, bsd.pbi_start_tvsec > 0 {
+            started = Date(timeIntervalSince1970: TimeInterval(bsd.pbi_start_tvsec))
+        }
+        return (folder, started)
+    }
+}

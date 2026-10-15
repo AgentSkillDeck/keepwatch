@@ -237,6 +237,36 @@ final class AgentHelperTests: XCTestCase {
         XCTAssertEqual(m.runningAgents(in: procs + [RunningProcess(pid: 3, name: "claude")]), ["Claude Code": 1])
     }
 
+    func testSessionsAreGroupedOldestFirstAndStopChecksThePid() {
+        let m = AgentMatcher()
+        let procs = [
+            RunningProcess(pid: 20, name: "claude"),
+            RunningProcess(pid: 21, name: "codex"),
+            RunningProcess(pid: 22, name: "claude", arguments: ["--bg-spare"]),
+            RunningProcess(pid: 23, name: "zsh"),
+        ]
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        let sessions = m.sessions(in: procs) { pid in
+            (pid == 20 ? "/Users/x/app" : nil, pid == 20 ? t0.addingTimeInterval(60) : t0)
+        }
+        XCTAssertEqual(sessions.map(\.pid), [21, 20])
+        XCTAssertEqual(sessions.last?.folderName, "app")
+        XCTAssertNil(sessions.first?.folderName)
+        // A pid that is no longer that agent (gone, or reused by another program) is never signalled.
+        XCTAssertFalse(m.stop(AgentSession(pid: 20, agent: "Claude Code"), current: [RunningProcess(pid: 20, name: "zsh")]))
+        XCTAssertFalse(m.stop(AgentSession(pid: 20, agent: "Claude Code"), current: []))
+        XCTAssertFalse(m.stop(AgentSession(pid: getpid(), agent: "Claude Code"),
+                              current: [RunningProcess(pid: getpid(), name: "claude")]))
+        XCTAssertFalse(m.stop(AgentSession(pid: 1, agent: "Claude Code"), current: [RunningProcess(pid: 1, name: "claude")]))
+    }
+
+    func testReadsOwnProcessDetails() {
+        let d = ProcessList.details(of: getpid())
+        XCTAssertEqual(d.folder, FileManager.default.currentDirectoryPath)
+        XCTAssertNotNil(d.started)
+        XCTAssertNil(ProcessList.details(of: -5).folder)
+    }
+
     func testBackgroundSessionPtyHostCountsOnce() {
         let m = AgentMatcher()
         let procs = [

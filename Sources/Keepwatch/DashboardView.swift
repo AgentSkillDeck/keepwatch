@@ -3,12 +3,13 @@ import SwiftUI
 
 /// The dashboard's sections, one per tab.
 enum DashboardTab: String, CaseIterable, Identifiable {
-    case awake, lid, privacy, security, power, ports, settings
+    case awake, agents, lid, privacy, security, power, ports, settings
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .awake: "Awake"
+        case .agents: "Agents"
         case .lid: "Lid closed"
         case .privacy: "Privacy"
         case .security: "Security"
@@ -21,6 +22,7 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .awake: "eye.fill"
+        case .agents: "terminal.fill"
         case .lid: "laptopcomputer"
         case .privacy: "hand.raised.fill"
         case .security: "checkmark.shield.fill"
@@ -68,6 +70,8 @@ struct DashboardView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+        case .agents:
+            Card("Agent sessions", icon: "terminal.fill") { AgentSessionsList() }
         case .lid:
             Card("Lid-closed sessions", icon: "laptopcomputer") { LidSessionCard(compact: false) }
         case .privacy:
@@ -123,7 +127,7 @@ struct TabBar: View {
     @Binding var selection: DashboardTab
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 2) {
             ForEach(DashboardTab.allCases) { tab in
                 let selected = tab == selection
                 Button { withAnimation(.snappy(duration: 0.2)) { selection = tab } } label: {
@@ -131,7 +135,7 @@ struct TabBar: View {
                         .font(.system(size: 12, weight: .semibold))
                         .lineLimit(1)
                         .fixedSize()
-                        .padding(.horizontal, 8).padding(.vertical, 7)
+                        .padding(.horizontal, 5).padding(.vertical, 7)
                         .frame(maxWidth: .infinity)
                         .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
                         .background(selected ? AnyShapeStyle(Brand.teal) : AnyShapeStyle(Color.clear),
@@ -199,6 +203,7 @@ enum SummaryTile: String, CaseIterable, Identifiable {
 /// The big status and the numbers worth a glance; the pencil picks which.
 struct SummaryHeader: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("dashboardTab") private var tab: DashboardTab = .awake
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -243,7 +248,7 @@ struct SummaryHeader: View {
             StatTile(value: p?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
         case .agents:
             let n = model.agents.sessionCount
-            VStack(alignment: .leading, spacing: 6) {
+            Button { tab = .agents } label: { VStack(alignment: .leading, spacing: 6) {
                 if model.agents.isEmpty {
                     Image(systemName: "terminal.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Brand.teal)
                 } else {
@@ -255,6 +260,9 @@ struct SummaryHeader: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .padding(12)
             .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(Rectangle()) }
+            .buttonStyle(.plain)
+            .help("See and stop agent sessions")
         case .mic:
             let live = model.privacy.micInUse
             StatTile(value: model.privacy.micMuted == true ? "Muted" : (live ? "Live" : "Idle"),
@@ -462,5 +470,74 @@ struct PortsList: View {
         } message: {
             Text("Sends it a normal quit signal. Unsaved work in that process may be lost.")
         }
+    }
+}
+
+/// Agent sessions grouped by agent, each with its folder, age and a Stop button.
+struct AgentSessionsList: View {
+    @EnvironmentObject var model: AppModel
+    @State private var confirming: [AgentSession] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if model.agentSessions.isEmpty {
+                Text("No agents running.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(groups, id: \.0) { agent, sessions in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 10) {
+                        AgentBadge(name: agent, size: 28)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(agent).font(.system(size: 14, weight: .semibold))
+                            Text("\(sessions.count) session\(sessions.count == 1 ? "" : "s")").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if sessions.count > 1 {
+                            Button { confirming = sessions } label: { Label("Stop all", systemImage: "stop.fill") }
+                                .controlSize(.small)
+                        }
+                    }
+                    ForEach(sessions) { session in
+                        HStack(spacing: 10) {
+                            Image(systemName: "folder.fill").foregroundStyle(Brand.teal).frame(width: 28)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(session.folderName ?? "Unknown folder").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                Text(detail(session)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                            }
+                            Spacer(minLength: 8)
+                            Button { confirming = [session] } label: { Label("Stop", systemImage: "stop.fill") }
+                                .controlSize(.small)
+                        }
+                        .padding(.leading, 10)
+                    }
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .confirmationDialog(title, isPresented: Binding(get: { !confirming.isEmpty }, set: { if !$0 { confirming = [] } })) {
+            Button(confirming.count > 1 ? "Stop \(confirming.count) sessions" : "Stop session", role: .destructive) {
+                for s in confirming { model.stopAgent(s) }
+                confirming = []
+            }
+        } message: {
+            Text("Unsaved work in the session may be lost.")
+        }
+    }
+
+    private var groups: [(String, [AgentSession])] {
+        Dictionary(grouping: model.agentSessions, by: \.agent).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+    }
+
+    private var title: String {
+        guard let first = confirming.first else { return "" }
+        return confirming.count > 1 ? "Stop all \(first.agent) sessions?" : "Stop \(first.agent) in \(first.folderName ?? "this folder")?"
+    }
+
+    private func detail(_ s: AgentSession) -> String {
+        var parts: [String] = []
+        if let started = s.started { parts.append("started " + started.formatted(.relative(presentation: .named))) }
+        if let folder = s.folder { parts.append((folder as NSString).abbreviatingWithTildeInPath) }
+        return parts.joined(separator: " · ")
     }
 }

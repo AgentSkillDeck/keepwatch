@@ -128,7 +128,7 @@ enum Snapshots {
         model.summaryTiles = SummaryTile.allCases
         write(DashboardView(initialTab: .awake).environmentObject(model), dir.appendingPathComponent("dashboard-all-tiles-dark.png"), .dark)
         model.summaryTiles = tiles
-        for tab in [DashboardTab.privacy, .security, .ports, .power] {
+        for tab in [DashboardTab.agents, .privacy, .security, .ports, .power] {
             write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(tab.rawValue)-dark.png"), .dark)
         }
     }
