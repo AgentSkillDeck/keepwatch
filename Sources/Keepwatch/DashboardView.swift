@@ -239,9 +239,18 @@ struct SummaryHeader: View {
             StatTile(value: p?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
         case .agents:
             let n = model.agents.sessionCount
-            StatTile(value: String(n),
-                     caption: n == 0 ? "Agents running" : (model.agents.count == 1 ? "\(model.agents.keys.first ?? "Agent") session\(n == 1 ? "" : "s")" : "Agent sessions"),
-                     icon: "terminal.fill")
+            VStack(alignment: .leading, spacing: 6) {
+                if model.agents.isEmpty {
+                    Image(systemName: "terminal.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Brand.teal)
+                } else {
+                    AgentBadges(agents: model.agents, size: 18)
+                }
+                Text(String(n)).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+                Text(n == 1 ? "Agent session" : "Agent sessions").font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         case .mic:
             let live = model.privacy.micInUse
             StatTile(value: model.privacy.micMuted == true ? "Muted" : (live ? "Live" : "Idle"),

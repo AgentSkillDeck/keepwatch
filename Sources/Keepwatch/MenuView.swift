@@ -261,9 +261,20 @@ struct AwakeControls: View {
                 }
             }
             if showCustom { customPanel.transition(.opacity.combined(with: .move(edge: .top))) }
-            SwitchRow(icon: "terminal", title: "While AI agents run", subtitle: agentLine,
-                      isOn: Binding(get: { if case .whileAgentsRun = model.mode { true } else { false } },
-                                    set: { model.setMode($0 ? .whileAgentsRun(grace: 120) : .off) }))
+            HStack(spacing: 10) {
+                IconBadge(icon: "terminal", tint: Brand.teal)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("While AI agents run").font(.system(size: 13, weight: .medium))
+                    Text(agentLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                if !model.agents.isEmpty { AgentBadges(agents: model.agents, size: 18) }
+                Toggle("While AI agents run",
+                       isOn: Binding(get: { if case .whileAgentsRun = model.mode { true } else { false } },
+                                     set: { model.setMode($0 ? .whileAgentsRun(grace: 120) : .off) }))
+                    .labelsHidden()
+                    .toggleStyle(BrandSwitchStyle())
+            }
         }
     }
 
@@ -321,8 +332,9 @@ struct AwakeControls: View {
     }
 
     private var agentLine: String {
-        if model.agents.isEmpty { return "Claude Code, Codex, Gemini CLI… none running" }
-        return "Running: " + model.agents.sessionSummary
+        if model.agents.isEmpty { return "None running now" }
+        let n = model.agents.sessionCount
+        return "\(n) session\(n == 1 ? "" : "s") running"
     }
 }
 

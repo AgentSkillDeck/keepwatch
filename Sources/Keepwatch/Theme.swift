@@ -191,3 +191,60 @@ struct BrandSwitchStyle: ToggleStyle {
         .accessibilityRepresentation { Toggle(isOn: configuration.$isOn) { configuration.label } }
     }
 }
+
+/// A monogram badge for an agent CLI. Original art: a coloured tile with
+/// letters, never a vendor's logo.
+struct AgentBadge: View {
+    var name: String
+    var count = 1
+    var size: CGFloat = 24
+
+    static let styles: [String: (String, Color)] = [
+        "Claude Code": ("CC", Color(red: 0.85, green: 0.47, blue: 0.34)),
+        "Codex": ("Cx", Color(red: 0.20, green: 0.62, blue: 0.47)),
+        "Gemini CLI": ("Ge", Color(red: 0.30, green: 0.50, blue: 0.95)),
+        "Aider": ("Ai", Color(red: 0.55, green: 0.40, blue: 0.85)),
+        "OpenCode": ("OC", Color(red: 0.35, green: 0.35, blue: 0.40)),
+        "Goose": ("Gs", Color(red: 0.90, green: 0.70, blue: 0.20)),
+        "Amp": ("Am", Color(red: 0.90, green: 0.30, blue: 0.45)),
+        "Cursor Agent": ("Cu", Color(red: 0.25, green: 0.25, blue: 0.30)),
+        "Qwen Code": ("Qw", Color(red: 0.45, green: 0.35, blue: 0.95)),
+        "Crush": ("Cr", Color(red: 0.95, green: 0.45, blue: 0.70)),
+    ]
+
+    var body: some View {
+        let style = Self.styles[name] ?? (String(name.prefix(2)), Color.gray)
+        Text(style.0)
+            .font(.system(size: size * 0.42, weight: .heavy, design: .rounded))
+            .foregroundStyle(.white)
+            .frame(width: size, height: size)
+            .background(style.1.gradient, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            .overlay(alignment: .topTrailing) {
+                if count > 1 {
+                    Text(String(count))
+                        .font(.system(size: size * 0.36, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black.opacity(0.85))
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: size * 0.5, minHeight: size * 0.5)
+                        .background(Brand.teal, in: Capsule())
+                        .offset(x: size * 0.25, y: -size * 0.25)
+                }
+            }
+            .help(count > 1 ? "\(name): \(count) sessions" : name)
+            .accessibilityLabel(count > 1 ? "\(name), \(count) sessions" : name)
+    }
+}
+
+/// Agent badges in a row, one per agent with its session count.
+struct AgentBadges: View {
+    var agents: [String: Int]
+    var size: CGFloat = 22
+
+    var body: some View {
+        HStack(spacing: size * 0.45) {
+            ForEach(agents.keys.sorted(), id: \.self) { AgentBadge(name: $0, count: agents[$0] ?? 1, size: size) }
+        }
+        .padding(.top, size * 0.25)
+        .padding(.trailing, size * 0.25)
+    }
+}
