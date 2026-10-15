@@ -635,3 +635,26 @@ final class TopAppsTests: XCTestCase {
         XCTAssertEqual(TopApps.describe(bytes: UInt64.max).isEmpty, false)
     }
 }
+
+final class DemoDataTests: XCTestCase {
+    /// Published pictures must never show a real user's folder or a real process.
+    func testDemoDataIsSyntheticAndConsistent() {
+        let now = Date()
+        let sessions = DemoData.agentSessions(now: now)
+        XCTAssertFalse(sessions.isEmpty)
+        for s in sessions {
+            XCTAssertTrue(s.folder?.hasPrefix("/Users/demo/") ?? false, "\(s)")
+            XCTAssertNotNil(DemoData.activity[s.pid], "every session has an activity")
+        }
+        XCTAssertTrue(DemoData.activity.values.contains(.idle))
+        XCTAssertTrue(DemoData.activity.values.contains(.working))
+        XCTAssertEqual(Set(sessions.map(\.pid)).count, sessions.count)
+        XCTAssertEqual(DemoData.privacy.micUsers.map(\.pid), [0], "no real pid to look a name up from")
+        for app in DemoData.apps {
+            XCTAssertTrue(app.path.hasPrefix("/Applications/") || app.path.hasPrefix("/System/Applications/"))
+        }
+        XCTAssertEqual(Set(DemoData.security.keys), Set(SecurityCheck.allCases))
+        XCTAssertEqual(DemoData.batteryHistory(now: now).readings.count, 8)
+        XCTAssertTrue(DemoData.privacyLog(now: now).events.allSatisfy { $0.date <= now })
+    }
+}
