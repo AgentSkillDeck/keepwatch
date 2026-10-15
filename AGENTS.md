@@ -9,7 +9,7 @@ Read `README.md`, `docs/design.md` and `SECURITY.md` before changing anything.
 - The only privileged code path is `LidWatchdog.startCommand` → `PMSet.adminAppleScript` → `osascript … with administrator privileges`. **Do not add another.** Any new root action needs an issue and the maintainer's approval first.
 - Every value interpolated into the root shell must be a number or a vetted absolute path (no `'`, `\`, newline). **Never interpolate user, URL, CLI or file text.** Add a rejection test for every new input.
 - Every way to start a lid session must also end it without a password: the watchdog deadline, the 12 h hard cap (`LidSessionPlan.hardCap`), the battery rules, the stop file and the launch-time check (boot time and watchdog alive). Never weaken or remove one of these. Never raise the hard cap.
-- Lid sessions can **not** be started from `keepwatch://` URLs or the CLI. Keep it that way: tests `testAgentsCannotStartLidSessions` and `testRejectsBadInputAndCapsDuration` guard it.
+- Lid sessions can **never** be started from `keepwatch://` URLs (any web page can open one). The CLI may only *ask* the running app (`keepwatch lid start`, a local distributed notification); the app then goes through the same macOS administrator prompt, so only the person at the Mac can grant it. Never add a path that starts a lid session without that prompt (no sudoers rule, no cached authorization). Tests `testAgentsCannotStartLidSessions` and `testRejectsBadInputAndCapsDuration` guard it.
 - **Never run `pmset` with a setting, `sudo`, `osascript … administrator`, or the real watchdog in tests or while developing.** Test the shell loop the way `LidWatchdogTests` does: run it against stub `pmset` and `ioreg` binaries in a temp dir.
 
 ## 2. Never crash, never hang

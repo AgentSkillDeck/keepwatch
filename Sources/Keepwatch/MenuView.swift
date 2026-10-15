@@ -369,14 +369,20 @@ struct LidSessionCard: View {
                 HStack(spacing: 10) {
                     IconBadge(icon: "laptopcomputer", tint: Brand.teal)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(model.lidHours > 0 ? "Sleep \(Format.hours(model.lidHours)) after the lid closes" : "No time limit")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("Keeps working with the lid shut. Needs your password once.")
+                        Text("Keep working with the lid shut").font(.system(size: 13, weight: .medium))
+                        Text("Then the Mac sleeps by itself. Needs your password once.")
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer(minLength: 4)
-                    Stepper("Hours", value: $model.lidHours, in: 0...12, step: 0.5).labelsHidden()
+                }
+                HStack(spacing: 6) {
+                    Text("Sleep after").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    ForEach([1.0, 3, 6, 12], id: \.self) { h in
+                        Button { model.lidHours = h } label: {
+                            Text(Format.hours(h)).font(.system(size: 12, weight: .semibold, design: .rounded))
+                        }
+                        .buttonStyle(TileButtonStyle(selected: model.lidHours == h, height: 28))
+                    }
                 }
                 if !compact {
                     SwitchRow(icon: "alarm", title: "Also sleep at a set time",
@@ -385,7 +391,7 @@ struct LidSessionCard: View {
                         DatePicker("Sleep at", selection: $model.lidSleepAt, displayedComponents: [.date, .hourAndMinute])
                             .padding(.leading, 38)
                     }
-                    SwitchRow(icon: "battery.50percent", title: "Allow on battery", subtitle: "Stops at 20%",
+                    SwitchRow(icon: "battery.50percent", title: "Allow on battery", subtitle: "Needs more than 20%. Stops at 20%.",
                               isOn: $model.lidAllowBattery)
                     SwitchRow(icon: "flag.checkered", title: "Stop when agents are done",
                               subtitle: "Then the Mac sleeps", isOn: $model.endLidSessionWhenAgentsFinish)
@@ -401,17 +407,24 @@ struct LidSessionCard: View {
                 }
                 .buttonStyle(.borderedProminent).tint(Brand.teal)
                 .disabled(model.lidBusy || !canStart)
-                if !canStart {
-                    Label(compact ? "Plug in power first, or allow battery in the dashboard."
-                                  : "Plug in power first, or turn on “Allow on battery” above.",
-                          systemImage: "powerplug")
-                        .font(.caption).foregroundStyle(.orange)
+                if let why = blockedReason {
+                    Label(why, systemImage: "powerplug").font(.caption).foregroundStyle(.orange)
                 }
             }
         }
     }
 
-    private var canStart: Bool { model.lidAllowBattery || !(model.power?.onBattery ?? false) }
+    private var canStart: Bool { blockedReason == nil }
+
+    /// Why a lid session can't start right now, in plain words.
+    private var blockedReason: String? {
+        guard let p = model.power, p.onBattery else { return nil }
+        if !model.lidAllowBattery {
+            return compact ? "Plug in, or allow battery in the dashboard." : "Plug in, or turn on “Allow on battery”."
+        }
+        if let pct = p.batteryPercent, pct <= 20 { return "Battery is at \(pct)%. Plug in to start." }
+        return nil
+    }
 
     private var endsText: String {
         var parts: [String] = []

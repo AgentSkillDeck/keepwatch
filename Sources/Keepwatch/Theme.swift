@@ -77,10 +77,11 @@ struct Eyebrow: View {
 /// A selectable tile: a big value and a small caption.
 struct TileButtonStyle: ButtonStyle {
     var selected: Bool
+    var height: CGFloat = 44
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(maxWidth: .infinity, minHeight: 44)
+            .frame(maxWidth: .infinity, minHeight: height)
             .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -143,23 +144,42 @@ struct StatusOrb: View {
     }
 }
 
-/// A big number with a caption, for the dashboard's summary row.
-struct StatTile: View {
+/// A big value with a caption, for the dashboard summary. Every tile uses
+/// the same three rows (icon, value, caption) so tiles line up across a row.
+struct StatTile<Icon: View>: View {
     var value: String
     var caption: String
-    var icon: String
     var tint: Color = Brand.teal
+    @ViewBuilder var icon: Icon
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
-            Text(value).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
-                .lineLimit(1).minimumScaleFactor(0.7)
-            Text(caption).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            icon.frame(height: 24, alignment: .leading)
+            Spacer(minLength: 6)
+            Text(value)
+                .font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
+                .foregroundStyle(tint == Brand.teal ? Color.primary : tint)
+                .lineLimit(1).minimumScaleFactor(0.6)
+            Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+                .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .padding(12)
         .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+extension StatTile where Icon == TileSymbol {
+    init(value: String, caption: String, icon: String, tint: Color = Brand.teal) {
+        self.init(value: value, caption: caption, tint: tint) { TileSymbol(name: icon, tint: tint) }
+    }
+}
+
+struct TileSymbol: View {
+    var name: String
+    var tint: Color
+    var body: some View {
+        Image(systemName: name).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
     }
 }
 

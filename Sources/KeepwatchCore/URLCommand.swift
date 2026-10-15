@@ -15,8 +15,8 @@ public enum URLCommand: Equatable, Sendable {
     case endLidSession
     case dashboard
 
-    /// Longest keep-awake a URL may request (24 h).
-    public static let maxMinutes = 24 * 60
+    /// Longest timed keep-awake a URL or the CLI may request (30 days).
+    public static let maxMinutes = Int(AwakeDuration.maxSeconds / 60)
 
     public static func parse(_ url: URL) -> URLCommand? {
         guard url.scheme?.lowercased() == "keepwatch" else { return nil }
@@ -25,6 +25,10 @@ public enum URLCommand: Equatable, Sendable {
         let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
         switch (host, path) {
         case ("awake", ""):
+            if let raw = query.first(where: { $0.name == "for" })?.value {
+                guard let seconds = AwakeDuration.parse(raw) else { return nil }
+                return .awake(minutes: AwakeDuration.minutes(seconds))
+            }
             if let raw = query.first(where: { $0.name == "minutes" })?.value {
                 guard let m = Int(raw), m > 0 else { return nil }
                 return .awake(minutes: min(m, maxMinutes))
@@ -38,5 +42,19 @@ public enum URLCommand: Equatable, Sendable {
         case ("dashboard", ""): return .dashboard
         default: return nil
         }
+    }
+}
+
+/// How the CLI asks the running app to start a lid session. Local only (a
+/// distributed notification); the app still shows the macOS password prompt.
+public enum LidRequest {
+    public static let notificationName = "app.keepwatch.Keepwatch.lid-start-request"
+
+    /// Hours from the request, rounded to half hours and kept within 0.5…12; nil if absent or bad.
+    public static func hours(from info: [AnyHashable: Any]?) -> Double? {
+        guard let raw = info?["hours"] else { return nil }
+        let h: Double? = (raw as? Double) ?? (raw as? NSNumber)?.doubleValue ?? (raw as? String).flatMap(Double.init)
+        guard let h, h.isFinite, h > 0 else { return nil }
+        return min(12, max(0.5, (h * 2).rounded() / 2))
     }
 }

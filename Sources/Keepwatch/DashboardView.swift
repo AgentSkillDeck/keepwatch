@@ -65,19 +65,31 @@ struct DashboardView: View {
                           subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
                 SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                           isOn: $model.notifyWhenAgentsFinish)
+                SwitchRow(icon: "bubble.left.and.text.bubble.right", title: "Stay active in chat apps",
+                          subtitle: "Slack and Teams won't show you as away", isOn: $model.stayActive)
+                SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
+                SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
+                SwitchRow(icon: "command", title: "Shortcut ⌃⌥⌘K",
+                          subtitle: "Turns keep-awake on or off from any app", isOn: $model.hotkeyEnabled)
                 if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
                     Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
         case .agents:
-            Card("Agent sessions", icon: "terminal.fill") { AgentSessionsList() }
+            Card("Agent sessions", icon: "terminal.fill") {
+                AgentSessionsList()
+                SwitchRow(icon: "bell.badge", title: "Tell me when an agent goes quiet",
+                          subtitle: "It may be done, or waiting for your answer", isOn: $model.notifyAgentWaiting)
+            }
         case .lid:
             Card("Lid-closed sessions", icon: "laptopcomputer") { LidSessionCard(compact: false) }
         case .privacy:
             Card("Privacy", icon: "hand.raised.fill") {
                 PrivacySwitches(compact: false)
                 CameraResetRow()
+                Divider()
+                PrivacyHistory()
                 Divider()
                 Eyebrow(text: "App permissions")
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
@@ -178,7 +190,7 @@ struct CameraResetRow: View {
 
 /// Things the summary can show: any number, six to a row.
 enum SummaryTile: String, CaseIterable, Identifiable {
-    case battery, health, agents, mic, camera, thermal, cycles, timeLeft, ports, security
+    case battery, health, agents, mic, camera, cpu, memory, thermal, cycles, timeLeft, ports, security
     static let defaults: [SummaryTile] = [.battery, .health, .agents, .mic, .camera]
     static let maxShown = SummaryTile.allCases.count
     static let perRow = 6
@@ -191,6 +203,8 @@ enum SummaryTile: String, CaseIterable, Identifiable {
         case .agents: "Agents running"
         case .mic: "Microphone"
         case .camera: "Camera"
+        case .cpu: "CPU"
+        case .memory: "Memory"
         case .thermal: "Temperature"
         case .cycles: "Charge cycles"
         case .timeLeft: "Battery time left"
@@ -248,19 +262,13 @@ struct SummaryHeader: View {
             StatTile(value: p?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
         case .agents:
             let n = model.agents.sessionCount
-            Button { tab = .agents } label: { VStack(alignment: .leading, spacing: 6) {
-                if model.agents.isEmpty {
-                    Image(systemName: "terminal.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(Brand.teal)
-                } else {
-                    AgentBadges(agents: model.agents, size: 18)
+            Button { tab = .agents } label: {
+                StatTile(value: String(n), caption: n == 1 ? "Agent session" : "Agent sessions") {
+                    if model.agents.isEmpty { TileSymbol(name: "terminal.fill", tint: Brand.teal) }
+                    else { AgentBadges(agents: model.agents, size: 18) }
                 }
-                Text(String(n)).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
-                Text(n == 1 ? "Agent session" : "Agent sessions").font(.caption).foregroundStyle(.secondary)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(12)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .contentShape(Rectangle()) }
             .buttonStyle(.plain)
             .help("See and stop agent sessions")
         case .mic:
@@ -272,6 +280,14 @@ struct SummaryHeader: View {
             let live = model.privacy.cameraInUse
             StatTile(value: live ? "Live" : "Off", caption: "Camera", icon: live ? "video.fill" : "video.slash",
                      tint: live ? Brand.live : Brand.teal)
+        case .cpu:
+            let busy = (model.load.cpuPercent ?? 0) >= 85
+            StatTile(value: model.load.cpuPercent.map { "\($0)%" } ?? "–", caption: "CPU", icon: "cpu",
+                     tint: busy ? .orange : Brand.teal)
+        case .memory:
+            let full = (model.load.memoryPercent ?? 0) >= 90
+            StatTile(value: model.load.memoryPercent.map { "\($0)%" } ?? "–", caption: "Memory", icon: "memorychip",
+                     tint: full ? .orange : Brand.teal)
         case .thermal:
             let hot = p.map { $0.thermal == .serious || $0.thermal == .critical } ?? false
             StatTile(value: p.map { PowerFacts.thermalName($0.thermal) } ?? "–", caption: "Temperature",
@@ -505,6 +521,7 @@ struct AgentSessionsList: View {
                                 Text(detail(session)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 8)
+                            ActivityPill(activity: model.agentActivity[session.pid])
                             Button { confirming = [session] } label: { Label("Stop", systemImage: "stop.fill") }
                                 .controlSize(.small)
                         }
@@ -539,5 +556,57 @@ struct AgentSessionsList: View {
         if let started = s.started { parts.append("started " + started.formatted(.relative(presentation: .named))) }
         if let folder = s.folder { parts.append((folder as NSString).abbreviatingWithTildeInPath) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// "Working" in teal or "Idle" in grey.
+struct ActivityPill: View {
+    var activity: AgentActivity?
+
+    var body: some View {
+        let working = activity == .working
+        HStack(spacing: 4) {
+            Circle().fill(working ? Brand.teal : Color.secondary).frame(width: 6, height: 6)
+            Text(working ? "Working" : "Idle").font(.caption.weight(.semibold))
+        }
+        .padding(.horizontal, 8).padding(.vertical, 3)
+        .foregroundStyle(working ? Brand.teal : Color.secondary)
+        .background((working ? Brand.teal : Color.primary).opacity(0.1), in: Capsule())
+    }
+}
+
+/// When the mic and camera turned on and off. Kept on this Mac only.
+struct PrivacyHistory: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Eyebrow(text: "History · kept on this Mac")
+                Spacer()
+                if !model.privacyLog.events.isEmpty {
+                    Button("Clear") { model.clearPrivacyLog() }.buttonStyle(.borderless).font(.caption)
+                }
+            }
+            if model.privacyLog.events.isEmpty {
+                Text("Nothing yet. Mic and camera use will show here.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(model.privacyLog.recent.prefix(12)) { e in
+                HStack(spacing: 8) {
+                    Image(systemName: e.device == .mic ? (e.on ? "mic.fill" : "mic.slash") : (e.on ? "video.fill" : "video.slash"))
+                        .foregroundStyle(e.on ? Brand.live : Color.secondary)
+                        .frame(width: 20)
+                    Text(line(e)).font(.callout).lineLimit(1)
+                    Spacer()
+                    Text(e.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func line(_ e: PrivacyEvent) -> String {
+        let device = e.device == .mic ? "Mic" : "Camera"
+        let state = e.on ? "on" : "off"
+        return e.apps.isEmpty ? "\(device) \(state)" : "\(device) \(state) · \(e.apps.joined(separator: ", "))"
     }
 }
