@@ -68,14 +68,18 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - **Shortcut ⌃⌥⌘K** turns keep-awake on or off from any app (no Accessibility permission needed).
 - **Screenshot (⌃⌥⌘S, or the menu button)** opens Apple's screenshot toolbar: an area, a window or the whole screen, as a picture or a video, with Markup to edit it. Apple's app does the capture, so Keepwatch needs no Screen Recording permission.
 
+**Quick timer**
+- 5, 10, 15, 25 or 45 minutes from the menu, with the countdown in the menu bar and a "Time's up" notification. Handy for a break, a build or a pomodoro.
+
 **Agents**
+- **Time limit per session** (off, 1, 2, 4 or 8 h): tells you when an agent has run that long, or stops it if you choose, for sessions left running by mistake.
 - An **Agents** tab lists every session, grouped by assistant (Claude Code, Codex, Gemini CLI…), with its name (Claude Code sessions), folder, when it started, and whether it is **working** or **idle** right now.
 - **Stop** one session or all sessions of an assistant, after a confirmation. Keepwatch checks the process is still that agent before it signals it.
 - A notification when an agent **goes quiet** after working: it may be done, or waiting for your answer.
 
 **Lid-closed sessions (beta)**
 
-> Beta: the watchdog is tested by running its real shell loop against stub tools, but lid sessions have had little real-world use. Try one plugged in first: start a session, check that `pmset -g | grep SleepDisabled` shows `1`, click **End lid session**, and check that the line disappears within about 30 s.
+> Beta: the watchdog is tested by running its real shell loop against stub tools, but lid sessions have had little real-world use. Try one plugged in first: start a session, check that `pmset -g | grep SleepDisabled` shows `1`, click **End lid session**, and check that the line disappears within a few seconds.
 
 - Keeps agents running with the lid shut, then puts the Mac to sleep by itself. Choose:
   - sleep **N hours after the lid closes** (opening the lid resets the timer), and/or
@@ -84,7 +88,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
   - on battery only above 20% (you can turn battery off entirely), and it stops at 20%,
   - a **12-hour hard cap** in every case.
 - It asks for your password **once**, when you start a session. That one admin command turns sleep off and starts a small root watchdog as its own launchd job, so it doesn't depend on Keepwatch or the password prompt staying open. The watchdog alone turns sleep back on and sleeps the Mac, so it works with the lid shut and even if Keepwatch crashes or quits.
-- Keepwatch ends a session early without a password (agents done, Mac running hot, you click End) by dropping a stop file that the watchdog checks every 30 s.
+- Keepwatch ends a session early without a password (agents done, Mac running hot, you click End) by dropping a stop file that the watchdog checks every 2 s.
 - On launch, Keepwatch checks the real `pmset` state:
   - If sleep is still off from an earlier session whose watchdog is gone (after a restart, say), it offers to turn sleep back on.
   - If something else turned sleep off, it says so.
@@ -103,22 +107,25 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - Keepwatch needs **no** mic, camera or Full Disk Access permission. Accessibility is asked for only if you turn on **Stay active**. It never captures anything; it only asks the system whether a device is running.
 
 **Stay active in chat apps (opt-in)**
-- Slack, Teams, Zoom and similar apps mark you away after a few minutes with no input, even when the Mac is awake. **Stay active** (Stay awake › Lid open) moves the pointer 1 pixel when you've been idle for 2, 4 or 9 minutes, like Amphetamine's cursor option. It never clicks or types, never runs during a lid session, and needs Accessibility, which Keepwatch asks for only when you turn it on.
+- Slack, Teams, Zoom and similar apps mark you away after a few minutes with no input, even when the Mac is awake. **Stay active** (Stay awake › Laptop open) moves the pointer 1 pixel when you've been idle for 2, 4 or 9 minutes, like Amphetamine's cursor option. It never clicks or types, never runs during a lid session, and needs Accessibility, which Keepwatch asks for only when you turn it on.
 
 **Menu and updates**
-- You choose what the menu shows (Settings › Menu): privacy, keep awake, laptop closed, agent sessions by name, and the apps using the most memory. Other keep-awake lengths are under **⋯**, with a custom time and Turn off.
+- You choose what the menu shows (Settings › Menu): privacy, keep awake, a quick timer, laptop closed, agent sessions by name, and the apps using the most memory. Other keep-awake lengths are under **⋯**, with a custom time and Turn off.
 - **Refresh** (⌘R) reads everything again now. Dashboard, Screenshot and the website link close the menu first.
-- **Stay awake** has two sub-tabs: **Lid open** (stops the Mac sleeping while you're away; no password) and **Lid closed** (keeps working with the lid shut, then sleeps by itself; needs your password once).
+- **Stay awake** has two sub-tabs: **Laptop open** (stops the Mac sleeping while you're away; no password) and **Laptop closed** (keeps working with the lid shut, then sleeps by itself; needs your password to start).
 - Lid sessions show the time left and whether the watchdog is running. If the watchdog stops while sleep is off, or doesn't answer **End lid session**, Keepwatch asks for your password and turns sleep back on itself.
 - **Check for updates** in Settings, and an optional daily check (off by default). **Install and relaunch** downloads the new version from the GitHub release and installs it only if its checksum matches, it is signed by Keepwatch's Developer ID and notarized by Apple. The old app goes to the Trash. Nothing installs unless you click.
 
 **Dashboard**
-- A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security. Six to a row.
+- A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security, free disk. Six to a row; click one to open its tab.
 - Tabs: Awake, Agents, Lid closed, Privacy, Security, Battery, Apps, Settings (⌘1–⌘8).
 - Battery charge, source, time left, **health** (% of original capacity), cycle count, Low Power Mode, thermal state and lid state.
 - **Apps using the most memory**, grouped by app (Chrome's helpers count as Chrome), with a confirmed **Quit** that works like ⌘Q. macOS's own processes can't be quit.
 - **Listening ports**: your processes listening on TCP ports, with a confirmed Stop. Stop is hidden for macOS's own processes.
 - **Battery health over time**: one reading a day, kept on this Mac.
+- **Charge limit:** a shortcut to macOS's own charge limit (Battery settings), which stops charging at 80–100% to slow battery wear.
+- **Storage** (Apps › Storage): free space, a warning once a day when it drops below 5, 10, 20 or 50 GB, and the developer and cache folders that use the most (Xcode build files, simulators, caches…) with Show in Finder. Read-only: Keepwatch never deletes files, and doesn't read Downloads, the Trash or other apps' data, so macOS never asks for permission.
+- **Startup items** (Security › Startup items): programs that start by themselves (launch agents and daemons), with a notification when a new one appears. Your own can be removed (stopped and moved to the Trash) after two clicks.
 - Quick settings: Dock autohide, show hidden files, show all file extensions.
 - Open at login, plus a link to manage all login items.
 

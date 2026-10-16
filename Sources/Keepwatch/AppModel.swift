@@ -48,6 +48,21 @@ final class AppModel: ObservableObject {
     @Published var notifyWhenAgentsFinish: Bool { didSet { defaults.set(notifyWhenAgentsFinish, forKey: "notifyAgents") } }
     @Published var muteMicWhenLidCloses: Bool { didSet { defaults.set(muteMicWhenLidCloses, forKey: "muteOnLid") } }
     @Published var muteMicOnLock: Bool { didSet { defaults.set(muteMicOnLock, forKey: "muteOnLock") } }
+    /// A "back in N minutes" countdown, shown in the menu bar.
+    @Published private(set) var quickTimer: QuickTimer?
+    /// Free disk space, and the big folders (scanned on request).
+    @Published private(set) var disk: DiskSpace.Usage?
+    @Published var diskWarnGB: Int { didSet { defaults.set(diskWarnGB, forKey: "diskWarnGB") } }
+    @Published private(set) var storageSpots: [DiskSpace.Spot] = []
+    @Published private(set) var scanningStorage = false
+    /// Launch agents and daemons, and which appeared since the last check.
+    @Published private(set) var startupItems: [StartupItem] = []
+    @Published private(set) var newStartupPaths: Set<String> = []
+    @Published var alertNewStartupItems: Bool { didSet { defaults.set(alertNewStartupItems, forKey: "alertNewStartup") } }
+    /// Agent time limit in hours (0 = off), and whether to stop or only tell.
+    @Published var agentLimitHours: Int { didSet { defaults.set(agentLimitHours, forKey: "agentLimitHours") } }
+    @Published var agentLimitStops: Bool { didSet { defaults.set(agentLimitStops, forKey: "agentLimitStops") } }
+    private var budgetHandled: Set<Int32> = []
     private var mutedByLock = false
     private var screenLocked = false
     /// Someone connected with Screen Sharing, or a capture in progress.
@@ -142,6 +157,10 @@ final class AppModel: ObservableObject {
         notifyWhenAgentsFinish = defaults.object(forKey: "notifyAgents") as? Bool ?? true
         muteMicWhenLidCloses = defaults.bool(forKey: "muteOnLid")
         muteMicOnLock = defaults.bool(forKey: "muteOnLock")
+        diskWarnGB = defaults.object(forKey: "diskWarnGB") as? Int ?? 10
+        alertNewStartupItems = defaults.object(forKey: "alertNewStartup") as? Bool ?? true
+        agentLimitHours = defaults.integer(forKey: "agentLimitHours")
+        agentLimitStops = defaults.bool(forKey: "agentLimitStops")
         endLidSessionWhenAgentsFinish = defaults.object(forKey: "lidEndsWithAgents") as? Bool ?? true
         lidHours = defaults.object(forKey: "lidHours") as? Double ?? 3
         lidAllowBattery = defaults.object(forKey: "lidBattery") as? Bool ?? true // on battery above 20% by default
@@ -281,6 +300,8 @@ final class AppModel: ObservableObject {
 
         guardKeepAwake()
         keepActiveIfIdle()
+        checkQuickTimer(now: now)
+        if tickCount % 15 == 0 { checkAgentBudget(now: now) }
         let l = loadSampler.sample()
         if l != load { load = l }
 
@@ -289,7 +310,7 @@ final class AppModel: ObservableObject {
         if snap != privacy { privacy = snap }
         if tickCount > 1 { alertIfPrivacyChanged(from: before) }
         if tickCount % 5 == 1 { refreshSlow() }
-        if tickCount % 30 == 1 { refreshSecurity() }
+        if tickCount % 30 == 1 { refreshSecurity(); refreshStartupItems() }
         handleLidTransition()
         superviseLidSession(now: now)
     }
@@ -313,6 +334,7 @@ final class AppModel: ObservableObject {
         }
         let p = SystemState.power()
         if p != power { power = p }
+        checkDisk()
         if batteryHistory.record(health: p.healthPercent, cycles: p.cycleCount, on: Date()) { batteryHistory.save() }
         pmset = SystemState.pmsetSettings()
         for t in QuickToggle.allCases where toggles[t] == nil { toggles[t] = t.read() }
@@ -442,6 +464,7 @@ final class AppModel: ObservableObject {
     nonisolated static let cameraCategory = "camera-on"
     nonisolated static let agentCategory = "agent-waiting"
     nonisolated static let screenCategory = "screen-watched"
+    nonisolated static let startupCategory = "startup-item"
     nonisolated static let openCameraAction = "open-camera-settings"
 
     /// Takes camera permission back from every app (`tccutil reset Camera`), so
@@ -719,6 +742,11 @@ final class AppModel: ObservableObject {
         ports = DemoData.ports
         topApps = DemoData.apps
         security = DemoData.security
+        disk = DemoData.disk
+        storageSpots = DemoData.storageSpots
+        startupItems = DemoData.startupItems
+        newStartupPaths = [DemoData.startupItems[0].path]
+        quickTimer = QuickTimer(minutes: 25, now: now.addingTimeInterval(-7 * 60), keepAwake: false)
         lidIntent = .off
         banner = nil
     }
@@ -925,6 +953,110 @@ final class AppModel: ObservableObject {
         if notificationsAsked { send(); return }
         notificationsAsked = true
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in if granted { send() } }
+    }
+
+    // MARK: Quick timer
+
+    func startQuickTimer(minutes: Int) {
+        let now = Date()
+        // Keep the Mac awake for the timer, unless something already does.
+        guard let timer = QuickTimer(minutes: minutes, now: now, keepAwake: mode == .off && !lidIntent.enabled) else { return }
+        if timer.keptAwake { keepAwake(for: TimeInterval(minutes) * 60) }
+        quickTimer = timer
+    }
+
+    func cancelQuickTimer() {
+        if let t = quickTimer, t.keptAwake, case .until = mode { setMode(.off) }
+        quickTimer = nil
+    }
+
+    private func checkQuickTimer(now: Date) {
+        guard !demo, let t = quickTimer, t.isDone(at: now) else { return }
+        quickTimer = nil
+        notify("Time's up", "Your \(t.minutes)-minute timer has ended.")
+    }
+
+    // MARK: Disk space
+
+    private func checkDisk() {
+        guard !demo, let usage = DiskSpace.usage() else { return }
+        if usage != disk { disk = usage }
+        let last = defaults.object(forKey: "lastDiskWarning") as? Date
+        if DiskSpace.shouldWarn(available: usage.available, thresholdGB: diskWarnGB, lastWarned: last, now: Date()) {
+            defaults.set(Date(), forKey: "lastDiskWarning")
+            notify("Disk almost full", "\(ByteCountFormatter.string(fromByteCount: usage.available, countStyle: .file)) left. Open Keepwatch › Apps › Storage to see what's big.")
+        }
+    }
+
+    func scanStorage() {
+        guard !scanningStorage, !demo else { return }
+        scanningStorage = true
+        Task.detached(priority: .utility) { [weak self] in
+            let spots = DiskSpace.spots()
+            await self?.setStorageSpots(spots)
+        }
+    }
+
+    private func setStorageSpots(_ spots: [DiskSpace.Spot]) {
+        storageSpots = spots
+        scanningStorage = false
+    }
+
+    // MARK: Startup items
+
+    func refreshStartupItems() {
+        guard !demo else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let items = StartupItems.scan()
+            await self?.setStartupItems(items)
+        }
+    }
+
+    private func setStartupItems(_ items: [StartupItem]) {
+        let seen = defaults.stringArray(forKey: "seenStartupItems").map(Set.init)
+        let fresh = StartupItems.newItems(items, seen: seen)
+        if !fresh.isEmpty {
+            newStartupPaths.formUnion(fresh.map(\.path))
+            for item in fresh.prefix(5) {
+                audit("New startup item seen", "\(item.name) (\(item.domain.rawValue))")
+                if alertNewStartupItems {
+                    notify("New startup item: \(item.name)", "It starts by itself (\(item.domain.rawValue.lowercased())). Not yours? Check Keepwatch › Security.",
+                           category: Self.startupCategory)
+                }
+            }
+        }
+        defaults.set(items.map(\.path), forKey: "seenStartupItems")
+        if items != startupItems { startupItems = items }
+    }
+
+    /// Stops one of your own launch agents and moves its file to the Trash.
+    func removeStartupItem(_ item: StartupItem) {
+        let folder = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/LaunchAgents").path + "/"
+        guard item.domain == .user, item.path.hasPrefix(folder), !item.path.dropFirst(folder.count).contains("/"),
+              !item.label.isEmpty, !item.label.contains("/") else { return }
+        _ = SystemState.run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(item.label)"])
+        var trashed: NSURL?
+        let ok = (try? FileManager.default.trashItem(at: URL(fileURLWithPath: item.path), resultingItemURL: &trashed)) != nil
+        audit(ok ? "Removed startup item" : "Couldn't remove startup item", "\(item.name) (\(item.label))")
+        newStartupPaths.remove(item.path)
+        refreshStartupItems()
+    }
+
+    // MARK: Agent time limit
+
+    private func checkAgentBudget(now: Date) {
+        guard !demo else { return }
+        budgetHandled.formIntersection(agentSessions.map(\.pid))
+        for s in AgentBudget.overLimit(agentSessions, limitHours: agentLimitHours, handled: budgetHandled, now: now) {
+            budgetHandled.insert(s.pid)
+            let name = sessionTitles[s.pid].map { "“\($0)”" } ?? "\(s.agent) in \(s.folderName ?? "a folder")"
+            if agentLimitStops {
+                stopAgent(s)
+                notify("Stopped \(name)", "It ran longer than your \(agentLimitHours) h limit.")
+            } else {
+                notify("\(name) has run \(agentLimitHours) h", "Still needed? Stop it from the Keepwatch menu.")
+            }
+        }
     }
 
     // MARK: Away summary, lock and screen sharing

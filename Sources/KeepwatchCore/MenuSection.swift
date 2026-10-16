@@ -3,7 +3,7 @@ import Foundation
 /// The parts of the menu-bar window. The user picks which ones show; the
 /// order is fixed so the menu always reads the same way.
 public enum MenuSection: String, CaseIterable, Identifiable, Sendable {
-    case privacy, keepAwake, laptopClosed, agents, memory
+    case privacy, keepAwake, timer, laptopClosed, agents, memory
 
     public var id: String { rawValue }
 
@@ -11,6 +11,7 @@ public enum MenuSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .privacy: "Privacy (mic and camera)"
         case .keepAwake: "Keep awake"
+        case .timer: "Quick timer"
         case .laptopClosed: "Laptop closed"
         case .agents: "Agent sessions"
         case .memory: "Apps using the most memory"
@@ -21,13 +22,14 @@ public enum MenuSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .privacy: "hand.raised.fill"
         case .keepAwake: "eye.fill"
+        case .timer: "timer"
         case .laptopClosed: "laptopcomputer.slash"
         case .agents: "terminal.fill"
         case .memory: "memorychip"
         }
     }
 
-    public static let defaults: [MenuSection] = [.privacy, .keepAwake, .laptopClosed]
+    public static let defaults: [MenuSection] = [.privacy, .keepAwake, .timer, .laptopClosed]
 
     /// The saved choice: known names only, no repeats, canonical order. An
     /// empty saved list is kept (a status-only menu is a valid choice).

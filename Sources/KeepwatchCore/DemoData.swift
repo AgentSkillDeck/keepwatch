@@ -78,6 +78,24 @@ public enum DemoData {
         ], batteryStart: 96, batteryEnd: 82)
     }
 
+    public static let disk = DiskSpace.Usage(available: 182_000_000_000, total: 494_000_000_000)
+
+    public static let storageSpots: [DiskSpace.Spot] = [
+        DiskSpace.Spot(name: "Simulators", url: URL(fileURLWithPath: "/Users/demo/Library/Developer/CoreSimulator"), bytes: 38_400_000_000),
+        DiskSpace.Spot(name: "Xcode build files", url: URL(fileURLWithPath: "/Users/demo/Library/Developer/Xcode/DerivedData"), bytes: 21_700_000_000),
+        DiskSpace.Spot(name: "App caches", url: URL(fileURLWithPath: "/Users/demo/Library/Caches"), bytes: 9_300_000_000),
+        DiskSpace.Spot(name: "npm cache", url: URL(fileURLWithPath: "/Users/demo/.npm"), bytes: 2_100_000_000),
+    ]
+
+    public static let startupItems: [StartupItem] = [
+        StartupItem(label: "dev.example.sync-helper", program: "/Users/demo/bin/sync-helper",
+                    path: "/Users/demo/Library/LaunchAgents/dev.example.sync-helper.plist", domain: .user, runAtLoad: true),
+        StartupItem(label: "org.example.updater", program: "/Library/Application Support/Example/updater",
+                    path: "/Library/LaunchAgents/org.example.updater.plist", domain: .allUsers, runAtLoad: true),
+        StartupItem(label: "org.example.vpn-daemon", program: "/Library/PrivilegedHelperTools/vpn-daemon",
+                    path: "/Library/LaunchDaemons/org.example.vpn-daemon.plist", domain: .system, runAtLoad: true),
+    ]
+
     public static func auditLog(now: Date) -> AuditLog {
         var log = AuditLog()
         log.append("Keep awake", "until 5:00 PM", at: now.addingTimeInterval(-3 * 3_600))

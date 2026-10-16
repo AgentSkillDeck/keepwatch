@@ -63,6 +63,7 @@ struct DashboardView: View {
     }
 
     @AppStorage("privacySub") private var privacySub = "Now"
+    @AppStorage("securitySub") private var securitySub = "Checks"
     @AppStorage("awakeSub2") private var awakeSub = "Laptop open"
     @AppStorage("moreAwakeOptions") private var moreAwakeOptions = false
 
@@ -149,6 +150,7 @@ struct DashboardView: View {
                 AgentSessionsList()
                 SwitchRow(icon: "bell.badge", title: "Tell me when an agent goes quiet",
                           subtitle: "It may be done, or waiting for your answer", isOn: $model.notifyAgentWaiting)
+                AgentLimitRow()
             }
         case .privacy:
             VStack(alignment: .leading, spacing: 12) {
@@ -165,19 +167,35 @@ struct DashboardView: View {
                 }
             }
         case .security:
-            Card("Security", icon: "checkmark.shield.fill") { SecurityList() }
+            VStack(alignment: .leading, spacing: 12) {
+                SubTabs(selection: $securitySub, options: ["Checks", "Startup items"])
+                if securitySub == "Startup items" {
+                    Card("Startup items", icon: "power.circle", subtitle: "Programs that start by themselves.") { StartupItemsView() }
+                } else {
+                    Card("Security", icon: "checkmark.shield.fill") { SecurityList() }
+                }
+            }
         case .power:
             VStack(spacing: 16) {
-                Card("Battery & power", icon: "bolt.fill") { PowerFacts() }
+                Card("Battery & power", icon: "bolt.fill") {
+                    PowerFacts()
+                    ChargeLimitRow()
+                }
                 Card("Battery health over time", icon: "chart.line.downtrend.xyaxis") { BatteryHistoryView() }
             }
         case .ports:
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    SubTabs(selection: $appsSub, options: ["Memory", "Ports"])
-                    SearchField(text: $appsQuery, prompt: appsSub == "Ports" ? "Search ports or apps" : "Search apps")
+                    SubTabs(selection: $appsSub, options: ["Memory", "Ports", "Storage"])
+                    if appsSub == "Storage" {
+                        Spacer()
+                    } else {
+                        SearchField(text: $appsQuery, prompt: appsSub == "Ports" ? "Search ports or apps" : "Search apps")
+                    }
                 }
-                if appsSub == "Ports" {
+                if appsSub == "Storage" {
+                    Card("Storage", icon: "internaldrive") { StorageView() }
+                } else if appsSub == "Ports" {
                     Card("Listening ports", icon: "network") { PortsList(query: appsQuery) }
                 } else {
                     Card("Using the most memory", icon: "memorychip") { TopAppsList(query: appsQuery) }
@@ -279,7 +297,7 @@ struct CameraResetRow: View {
 
 /// Things the summary can show: any number, six to a row.
 enum SummaryTile: String, CaseIterable, Identifiable {
-    case battery, health, agents, mic, camera, cpu, memory, thermal, cycles, timeLeft, ports, security
+    case battery, health, agents, mic, camera, cpu, memory, thermal, cycles, timeLeft, ports, security, disk
     static let defaults: [SummaryTile] = [.battery, .health, .agents, .mic, .camera]
     static let maxShown = SummaryTile.allCases.count
     static let perRow = 6
@@ -299,6 +317,7 @@ enum SummaryTile: String, CaseIterable, Identifiable {
         case .timeLeft: "Battery time left"
         case .ports: "Listening ports"
         case .security: "Security checks"
+        case .disk: "Free disk space"
         }
     }
 }
@@ -351,7 +370,7 @@ struct SummaryHeader: View {
         case .battery, .health, .thermal, .cycles, .timeLeft: .power
         case .agents: .agents
         case .mic, .camera: .privacy
-        case .cpu, .memory, .ports: .ports
+        case .cpu, .memory, .ports, .disk: .ports
         case .security: .security
         }
     }
@@ -360,6 +379,7 @@ struct SummaryHeader: View {
         Button {
             if tile == .ports { UserDefaults.standard.set("Ports", forKey: "appsSub") }
             if tile == .memory || tile == .cpu { UserDefaults.standard.set("Memory", forKey: "appsSub") }
+            if tile == .disk { UserDefaults.standard.set("Storage", forKey: "appsSub") }
             withAnimation(.snappy(duration: 0.2)) { tab = destination(tile) }
         } label: { tileContent(tile).contentShape(Rectangle()) }
         .buttonStyle(.plain)
@@ -412,6 +432,12 @@ struct SummaryHeader: View {
                      caption: "Time left", icon: "hourglass")
         case .ports:
             StatTile(value: String(model.ports.count), caption: "Ports", icon: "network")
+        case .disk:
+            let d = model.disk
+            let low = d.map { $0.available < Int64(max(1, model.diskWarnGB)) * 1_000_000_000 } ?? false
+            StatTile(value: d.map { ByteCountFormatter.string(fromByteCount: $0.available, countStyle: .file) } ?? "–",
+                     caption: "Free disk", icon: "internaldrive", tint: low ? .orange : Brand.teal,
+                     fraction: d.map { 1 - $0.usedFraction })
         case .security:
             let weak = model.security.values.filter { if case .weak = $0 { true } else { false } }.count
             StatTile(value: weak == 0 ? "All good" : "\(weak) to check", caption: "Security",
@@ -1019,6 +1045,158 @@ struct ActivityLogView: View {
         .confirmationDialog("Clear the activity log?", isPresented: $confirmClear) {
             Button("Clear", role: .destructive) { model.clearAuditLog(); page = 0 }
         } message: { Text("A note that you cleared it stays.") }
+    }
+}
+
+/// macOS 26 has its own charge limit; Keepwatch points to it.
+struct ChargeLimitRow: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            IconBadge(icon: "battery.75percent", tint: Brand.teal)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Charge limit").font(.system(size: 13, weight: .medium))
+                Text("Stop charging at 80–100% to slow battery wear.").font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Set in Battery settings") {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.Battery-Settings.extension") { NSWorkspace.shared.open(url) }
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
+/// Time limit for agent sessions.
+struct AgentLimitRow: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                IconBadge(icon: "timer", tint: Brand.teal)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Time limit per session").font(.system(size: 13, weight: .medium))
+                    Text("For agents left running by mistake.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            HStack(spacing: 6) {
+                Button("Off") { model.agentLimitHours = 0 }.buttonStyle(ChipButtonStyle(selected: model.agentLimitHours == 0))
+                ForEach(AgentBudget.choicesHours, id: \.self) { h in
+                    Button("\(h) h") { model.agentLimitHours = h }.buttonStyle(ChipButtonStyle(selected: model.agentLimitHours == h))
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.leading, 38)
+            if model.agentLimitHours > 0 {
+                Picker("When reached", selection: $model.agentLimitStops) {
+                    Text("Tell me").tag(false)
+                    Text("Stop the session").tag(true)
+                }
+                .pickerStyle(.radioGroup).horizontalRadioGroupLayout()
+                .padding(.leading, 38)
+            }
+        }
+    }
+}
+
+/// Free space and the folders that usually fill the disk.
+struct StorageView: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let d = model.disk {
+                HStack {
+                    Text("\(ByteCountFormatter.string(fromByteCount: d.available, countStyle: .file)) free")
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                    Text("of \(ByteCountFormatter.string(fromByteCount: d.total, countStyle: .file))").foregroundStyle(.secondary)
+                    Spacer()
+                }
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(d.usedFraction > 0.9 ? Color.orange : Brand.teal).frame(width: g.size.width * d.usedFraction)
+                    }
+                }
+                .frame(height: 6)
+            }
+            HStack(spacing: 6) {
+                Text("Warn below").font(.caption).foregroundStyle(.secondary)
+                ForEach(DiskSpace.thresholdChoicesGB, id: \.self) { gb in
+                    Button("\(gb) GB") { model.diskWarnGB = gb }.buttonStyle(ChipButtonStyle(selected: model.diskWarnGB == gb))
+                }
+                Button("Off") { model.diskWarnGB = 0 }.buttonStyle(ChipButtonStyle(selected: model.diskWarnGB == 0))
+                Spacer()
+                Button(model.scanningStorage ? "Scanning…" : (model.storageSpots.isEmpty ? "Find what's big" : "Scan again")) { model.scanStorage() }
+                    .controlSize(.small).disabled(model.scanningStorage)
+            }
+            let top = model.storageSpots.first?.bytes ?? 1
+            ForEach(model.storageSpots) { spot in
+                HStack(spacing: 10) {
+                    Image(systemName: "folder.fill").foregroundStyle(Brand.teal).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(spot.name).font(.system(size: 13, weight: .medium))
+                        GeometryReader { g in
+                            Capsule().fill(Brand.teal.opacity(0.7))
+                                .frame(width: g.size.width * CGFloat(Double(spot.bytes) / Double(max(1, top))))
+                        }
+                        .frame(height: 4)
+                    }
+                    Text(ByteCountFormatter.string(fromByteCount: spot.bytes, countStyle: .file))
+                        .font(.system(size: 13, weight: .semibold)).monospacedDigit().frame(width: 80, alignment: .trailing)
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([spot.url]) } label: { Image(systemName: "magnifyingglass") }
+                        .buttonStyle(.borderless).help("Show in Finder")
+                }
+            }
+            Text("Keepwatch never deletes files. Open a folder and decide.").font(.caption).foregroundStyle(.secondary)
+        }
+        .onAppear { if model.storageSpots.isEmpty { model.scanStorage() } }
+    }
+}
+
+/// Launch agents and daemons, newest arrivals marked.
+struct StartupItemsView: View {
+    @EnvironmentObject var model: AppModel
+    @AppStorage("showAppleStartup") private var showApple = false
+
+    var body: some View {
+        let items = model.startupItems.filter { showApple || !$0.isApple }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SwitchRow(icon: "bell.badge", title: "Tell me when a new one appears", isOn: $model.alertNewStartupItems)
+            }
+            HStack {
+                Toggle("Show Apple's", isOn: $showApple).toggleStyle(.checkbox).font(.caption)
+                Spacer()
+                Button("Login items…") { model.open(.loginItems) }.controlSize(.small)
+            }
+            if items.isEmpty { Text("None found.").font(.callout).foregroundStyle(.secondary) }
+            ForEach(items) { item in
+                HStack(spacing: 10) {
+                    Image(systemName: item.domain == .system ? "gearshape.2.fill" : "person.crop.circle")
+                        .foregroundStyle(Brand.teal).frame(width: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 6) {
+                            Text(item.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                            if model.newStartupPaths.contains(item.path) {
+                                Text("NEW").font(.system(size: 9, weight: .bold)).padding(.horizontal, 5).padding(.vertical, 1)
+                                    .foregroundStyle(.white).background(Capsule().fill(Color.orange))
+                            }
+                        }
+                        Text("\(item.domain.rawValue) · \(item.label)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer()
+                    Button { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: item.path)]) } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .buttonStyle(.borderless).help("Show in Finder")
+                    if item.domain == .user {
+                        ConfirmButton(label: "Remove", help: "Stop it and move it to the Trash (click twice)") { model.removeStartupItem(item) }
+                    }
+                }
+            }
+        }
+        .onAppear { model.refreshStartupItems() }
     }
 }
 

@@ -895,7 +895,8 @@ final class MenuSectionTests: XCTestCase {
     }
 
     func testToggle() {
-        XCTAssertEqual(MenuSection.toggle(.agents, in: MenuSection.defaults), [.privacy, .keepAwake, .laptopClosed, .agents])
+        XCTAssertEqual(MenuSection.toggle(.agents, in: MenuSection.defaults), [.privacy, .keepAwake, .timer, .laptopClosed, .agents])
+        XCTAssertEqual(MenuSection.toggle(.timer, in: MenuSection.defaults), [.privacy, .keepAwake, .laptopClosed])
         XCTAssertEqual(MenuSection.toggle(.privacy, in: [.privacy, .memory]), [.memory])
     }
 }
@@ -1125,5 +1126,87 @@ final class InterpretedAgentTests: XCTestCase {
         XCTAssertTrue(m.isCandidate("node"))
         XCTAssertTrue(m.isCandidate("claude"))
         XCTAssertFalse(m.isCandidate("Finder"))
+    }
+}
+
+final class QuickTimerTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testCountdownText() throws {
+        let t = try XCTUnwrap(QuickTimer(minutes: 25, now: t0, keepAwake: true))
+        XCTAssertEqual(t.menuBarText(at: t0), "25m")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(24 * 60 + 15)), "45s")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(3_000)), "0s")
+        XCTAssertTrue(t.isDone(at: t0.addingTimeInterval(1_500)))
+        XCTAssertFalse(t.isDone(at: t0.addingTimeInterval(1_499)))
+        XCTAssertEqual(QuickTimer(minutes: 90, now: t0, keepAwake: false)?.menuBarText(at: t0), "1h30")
+        XCTAssertEqual(QuickTimer(minutes: 60, now: t0, keepAwake: false)?.menuBarText(at: t0), "1h")
+    }
+
+    func testRejectsBadLengths() {
+        XCTAssertNil(QuickTimer(minutes: 0, now: t0, keepAwake: true))
+        XCTAssertNil(QuickTimer(minutes: -5, now: t0, keepAwake: true))
+        XCTAssertNil(QuickTimer(minutes: QuickTimer.maxMinutes + 1, now: t0, keepAwake: true))
+    }
+}
+
+final class DiskSpaceTests: XCTestCase {
+    func testWarnOncePerDayBelowThreshold() {
+        let now = Date()
+        XCTAssertTrue(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: nil, now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 40_000_000_000, thresholdGB: 10, lastWarned: nil, now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: now.addingTimeInterval(-3_600), now: now))
+        XCTAssertTrue(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: now.addingTimeInterval(-90_000), now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 0, thresholdGB: 0, lastWarned: nil, now: now), "0 = off")
+    }
+
+    func testFolderSizeAndSpots() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("kwd-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let dl = home.appendingPathComponent(".npm/sub")
+        try FileManager.default.createDirectory(at: dl, withIntermediateDirectories: true)
+        try Data(count: 200_000).write(to: dl.appendingPathComponent("big.bin"))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("Downloads"), withIntermediateDirectories: true)
+        try Data(count: 300_000).write(to: home.appendingPathComponent("Downloads/big.bin"))
+        XCTAssertGreaterThanOrEqual(DiskSpace.folderSize(home.appendingPathComponent(".npm")), 200_000)
+        let spots = DiskSpace.spots(home: home)
+        XCTAssertEqual(spots.map(\.name), ["npm cache"], "missing and empty folders are skipped; Downloads is never read")
+        XCTAssertEqual(DiskSpace.folderSize(home.appendingPathComponent("nope")), 0)
+        XCTAssertNotNil(DiskSpace.usage())
+        XCTAssertEqual(DiskSpace.Usage(available: 0, total: 0).usedFraction, 0)
+    }
+}
+
+final class StartupItemsTests: XCTestCase {
+    func testScanReadsPlistsLenientlyAndFlagsNewOnes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kws-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let good: [String: Any] = ["Label": "com.example.sync", "ProgramArguments": ["/Applications/Sync.app/Contents/MacOS/sync", "--bg"], "RunAtLoad": true]
+        try PropertyListSerialization.data(fromPropertyList: good, format: .xml, options: 0)
+            .write(to: dir.appendingPathComponent("com.example.sync.plist"))
+        try Data("not a plist".utf8).write(to: dir.appendingPathComponent("broken.thing.plist"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("readme.txt"))
+        let items = StartupItems.scan([(dir, .user)])
+        XCTAssertEqual(items.count, 2)
+        let sync = try XCTUnwrap(items.first { $0.label == "com.example.sync" })
+        XCTAssertEqual(sync.name, "sync")
+        XCTAssertTrue(sync.runAtLoad)
+        XCTAssertEqual(items.first { $0.label == "broken.thing" }?.program, nil, "damaged file still listed")
+        XCTAssertEqual(StartupItems.newItems(items, seen: nil), [], "first scan: nothing is new")
+        XCTAssertEqual(StartupItems.newItems(items, seen: [sync.path]).map(\.label), ["broken.thing"])
+        XCTAssertEqual(StartupItems.scan([(dir.appendingPathComponent("missing"), .user)]), [])
+    }
+}
+
+final class AgentBudgetTests: XCTestCase {
+    func testOverLimit() {
+        let now = Date()
+        let old = AgentSession(pid: 1, agent: "Codex", started: now.addingTimeInterval(-5 * 3_600))
+        let young = AgentSession(pid: 2, agent: "Codex", started: now.addingTimeInterval(-600))
+        let unknown = AgentSession(pid: 3, agent: "Codex")
+        XCTAssertEqual(AgentBudget.overLimit([old, young, unknown], limitHours: 4, handled: [], now: now).map(\.pid), [1])
+        XCTAssertEqual(AgentBudget.overLimit([old], limitHours: 4, handled: [1], now: now), [], "warned once")
+        XCTAssertEqual(AgentBudget.overLimit([old], limitHours: 0, handled: [], now: now), [], "0 = off")
     }
 }

@@ -13,7 +13,7 @@ struct KeepwatchApp: App {
                 .environmentObject(model)
         } label: {
             MenuBarLabel(holding: model.holding, lidSession: model.lidIntent.enabled,
-                         mic: model.privacy.micInUse, camera: model.privacy.cameraInUse)
+                         mic: model.privacy.micInUse, camera: model.privacy.cameraInUse, timer: model.quickTimer)
                 .background(WindowOpenerBridge(model: model))
         }
         .menuBarExtraStyle(.window)
@@ -33,10 +33,16 @@ struct MenuBarLabel: View {
     var lidSession: Bool
     var mic: Bool
     var camera: Bool
+    var timer: QuickTimer?
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: lidSession ? "laptopcomputer" : (holding ? "eye.fill" : "eye"))
+            if let timer {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    Text(timer.menuBarText(at: ctx.date)).monospacedDigit()
+                }
+            }
             if let badge = PrivacyBadge.image(mic: mic, camera: camera) { Image(nsImage: badge) }
         }
         .accessibilityLabel(accessibilityText)
@@ -132,6 +138,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if let pid = content.userInfo["hostPID"] as? Int, let pid32 = Int32(exactly: pid), pid32 > 0 {
                 Task { @MainActor in _ = NSRunningApplication(processIdentifier: pid32)?.activate() }
             }
+        case AppModel.startupCategory:
+            Task { @MainActor in AppModel.shared.showDashboard(tab: .security) }
         case AppModel.screenCategory:
             if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
                 Task { @MainActor in NSWorkspace.shared.open(url) }
@@ -182,6 +190,15 @@ enum Snapshots {
               dir.appendingPathComponent("menubar-live-dark.png"), .dark)
         for tab in [DashboardTab.agents, .lid, .privacy, .security, .ports, .power, .settings] {
             write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(tab.rawValue)-dark.png"), .dark)
+        }
+        // Sub-tabs added in 0.3, then the user's own choice put back.
+        let d = UserDefaults.standard
+        for (key, value, tab, name) in [("appsSub", "Storage", DashboardTab.ports, "storage"),
+                                        ("securitySub", "Startup items", DashboardTab.security, "startup")] {
+            let saved = d.string(forKey: key)
+            d.set(value, forKey: key)
+            write(DashboardView(initialTab: tab).environmentObject(model), dir.appendingPathComponent("tab-\(name)-dark.png"), .dark)
+            d.set(saved, forKey: key)
         }
     }
 

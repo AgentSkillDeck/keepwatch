@@ -33,4 +33,8 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 - **Screen Sharing detection** only checks whether macOS's `screensharingd` is running. **Away summaries** are kept in memory and never written to disk.
 - The mic and camera history is a small JSON file in `~/Library/Application Support/Keepwatch/`, capped at 500 entries, never sent anywhere. **Clear** in the Privacy tab deletes it.
 
+- **Storage** reads only the volume's free space and the sizes of a fixed list of folders under your home (caches, Xcode and simulator data, `~/.cache`, `~/.npm`, `~/Library/Logs`). It never deletes anything and never reads Downloads, the Trash or other apps' containers.
+- **Startup items** reads the property lists in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons` (at most 1,000 files, 256 KB each). **Remove** works only on your own items (`~/Library/LaunchAgents`): it runs `launchctl bootout` for that item and moves its file to the Trash, after two clicks, and logs it.
+- The **agent time limit** stops a session only if you chose "Stop the session", with the same checks as Stop in the Agents tab.
+
 A report that any of these guarantees can be broken is in scope.

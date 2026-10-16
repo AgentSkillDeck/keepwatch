@@ -17,6 +17,7 @@ struct MenuView: View {
                 switch section {
                 case .privacy: PrivacySwitches(compact: true)
                 case .keepAwake: AwakeControls(showCustom: customOpen, compact: true)
+                case .timer: MenuTimer()
                 case .laptopClosed: LidSessionCard(compact: true)
                 case .agents: MenuAgents()
                 case .memory: MenuMemory()
@@ -53,6 +54,40 @@ struct MenuView: View {
         }
         .padding(16)
         .frame(width: 340)
+    }
+}
+
+/// "Back in N minutes": a countdown that keeps the Mac awake and notifies at the end.
+struct MenuTimer: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            MenuHeading("Quick timer", info: "Counts down in the menu bar and keeps the Mac awake.") {
+                if model.quickTimer != nil {
+                    Button("Cancel") { model.cancelQuickTimer() }
+                        .buttonStyle(.borderless).font(.caption.weight(.semibold))
+                }
+            }
+            if let t = model.quickTimer {
+                TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                    HStack {
+                        Image(systemName: "timer").foregroundStyle(Brand.teal)
+                        Text(Format.clock(t.remaining(at: ctx.date)))
+                            .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+                        Spacer()
+                        Text("ends \(t.end.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            } else {
+                HStack(spacing: 6) {
+                    ForEach([5, 10, 15, 25, 45], id: \.self) { m in
+                        Button("\(m)m") { model.startQuickTimer(minutes: m) }
+                            .buttonStyle(TileButtonStyle(selected: false, height: 30))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -332,7 +367,7 @@ struct PrivacySwitches: View {
     private var micShort: String {
         if model.privacy.micMuted == nil { return "No mic" }
         if model.privacy.micMuted == true { return "Muted" }
-        return model.privacy.micInUse ? "Live" : "On, not in use"
+        return model.privacy.micInUse ? "Live" : "On"
     }
 
     private var fullBody: some View {
@@ -612,17 +647,16 @@ struct AwakeControls: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 56)
                     .multilineTextAlignment(.center)
-                Picker("Unit", selection: $model.customUnit) {
-                    ForEach(AwakeDuration.Unit.allCases) { Text($0.label).tag($0) }
+                ForEach(AwakeDuration.Unit.allCases) { unit in
+                    Button(unit.label) { model.customUnit = unit }
+                        .buttonStyle(ChipButtonStyle(selected: model.customUnit == unit))
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(maxWidth: .infinity)
+                Spacer(minLength: 0)
             }
             HStack {
                 Text(customSummary).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button("Start") { model.keepAwakeCustom() }
+                Button("Start") { model.keepAwakeCustom(); withAnimation(.snappy) { showCustom = false } }
                     .buttonStyle(.borderedProminent).tint(Brand.teal).controlSize(.small)
                     .disabled(AwakeDuration.seconds(model.customAmount, model.customUnit) == nil)
             }
@@ -634,7 +668,7 @@ struct AwakeControls: View {
                     .datePickerStyle(.field)
                     .controlSize(.small)
                 Spacer(minLength: 4)
-                Button("Start") { model.keepAwake(until: until) }
+                Button("Start") { model.keepAwake(until: until); withAnimation(.snappy) { showCustom = false } }
                     .buttonStyle(.bordered).controlSize(.small)
             }
         }
@@ -823,6 +857,13 @@ struct LidSessionCard: View {
 
 enum Format {
     static func duration(_ seconds: TimeInterval) -> String { AwakeDuration.describe(seconds) }
+
+    /// "24:59" or "1:02:03".
+    static func clock(_ seconds: TimeInterval) -> String {
+        let s = Int(max(0, seconds.isFinite ? seconds : 0).rounded(.up))
+        return s >= 3_600 ? String(format: "%d:%02d:%02d", s / 3_600, s / 60 % 60, s % 60)
+                          : String(format: "%d:%02d", s / 60, s % 60)
+    }
 
     static func hours(_ h: Double) -> String {
         h == h.rounded() ? "\(Int(h)) h" : String(format: "%.1f h", h)
