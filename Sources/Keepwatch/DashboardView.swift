@@ -61,24 +61,31 @@ struct DashboardView: View {
         .onAppear { model.refreshSecurity(); model.refreshPorts() }
     }
 
-    @AppStorage("awakeSub") private var awakeSub = "Lid open"
     @AppStorage("privacySub") private var privacySub = "Now"
+    @AppStorage("moreAwakeOptions") private var moreAwakeOptions = false
 
     private var lidOpenCard: some View {
-        Card("Keep awake (laptop open)", icon: "eye.fill") {
+        Card("Laptop open: keep awake", icon: "eye.fill") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
                       subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
             SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                       isOn: $model.notifyWhenAgentsFinish)
-            SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
-                      subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
-            SwitchRow(icon: "display.2", title: "Stay awake with an external display", isOn: $model.autoWhileDisplay)
-            SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
-            SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
-            SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
-                      subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
+            DisclosureGroup(isExpanded: $moreAwakeOptions) {
+                VStack(alignment: .leading, spacing: 10) {
+                    SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
+                              subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
+                    SwitchRow(icon: "display.2", title: "Stay awake with an external display", isOn: $model.autoWhileDisplay)
+                    SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
+                    SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
+                    SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
+                              subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
+                }
+                .padding(.top, 8)
+            } label: {
+                Text("More options: automatic, battery limits, shortcuts").font(.system(size: 12, weight: .semibold))
+            }
             if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
                 Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
@@ -113,13 +120,10 @@ struct DashboardView: View {
         switch tab {
         case .awake, .lid:
             VStack(alignment: .leading, spacing: 12) {
-                AwakeModePicker(selection: Binding(get: { tab == .lid ? "Lid closed" : awakeSub },
-                                                   set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }))
-                if tab == .lid || awakeSub == "Lid closed" {
-                    Card("Run with the laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
-                } else {
-                    lidOpenCard
-                }
+                Text("Two ways to keep working. Use either, or both: keep awake while you're nearby, then start a lid session before you close the laptop.")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                lidOpenCard
+                Card("Laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
             }
         case .agents:
             Card("Agent sessions", icon: "terminal.fill") {
@@ -129,9 +133,10 @@ struct DashboardView: View {
             }
         case .privacy:
             VStack(alignment: .leading, spacing: 12) {
-                SubTabs(selection: $privacySub, options: ["Now", "History", "Permissions"])
-                Card("Privacy", icon: "hand.raised.fill") {
+                SubTabs(selection: $privacySub, options: ["Now", "By app", "History", "Permissions"])
+                Card(privacySub == "By app" ? "Mic and camera use by app" : "Privacy", icon: "hand.raised.fill") {
                     switch privacySub {
+                    case "By app": PrivacyByApp()
                     case "History": PrivacyHistory()
                     case "Permissions": permissionsGrid
                     default:
@@ -161,8 +166,9 @@ struct DashboardView: View {
             }
         case .settings:
             VStack(alignment: .leading, spacing: 12) {
-                SubTabs(selection: $settingsSub, options: ["General", "Menu", "Mac tweaks", "About"])
+                SubTabs(selection: $settingsSub, options: ["General", "Menu", "Mac tweaks", "Activity log", "About"])
                 switch settingsSub {
+                case "Activity log": Card("Activity log", icon: "list.bullet.rectangle") { ActivityLogView() }
                 case "Menu": MenuButtonsCard()
                 case "Mac tweaks":
                     Card("Mac tweaks", icon: "wand.and.stars") {
@@ -839,6 +845,87 @@ struct MenuButtonsCard: View {
     }
 }
 
+/// Mic and camera time per app, from the privacy history.
+struct PrivacyByApp: View {
+    @EnvironmentObject var model: AppModel
+    @AppStorage("privacyRange") private var days = 7
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach([1, 7, 30], id: \.self) { d in
+                    Button(d == 1 ? "Today" : "\(d) days") { days = d }.buttonStyle(ChipButtonStyle(selected: days == d))
+                }
+                Spacer(minLength: 0)
+            }
+            let now = Date()
+            let since = days == 1 ? Calendar.current.startOfDay(for: now) : now.addingTimeInterval(-Double(days) * 86_400)
+            let rows = model.privacyLog.usage(since: since, now: now)
+            if rows.isEmpty {
+                Text("No mic or camera use recorded in this time.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(rows) { u in
+                HStack(spacing: 10) {
+                    Image(systemName: u.device == .mic ? "mic.fill" : "video.fill").foregroundStyle(Brand.teal).frame(width: 18)
+                    Text(u.app).font(.system(size: 13, weight: .medium)).lineLimit(1)
+                    Spacer()
+                    Text("\(u.sessions)×").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    Text(Format.duration(u.seconds)).font(.system(size: 13, weight: .semibold)).monospacedDigit()
+                        .frame(minWidth: 80, alignment: .trailing)
+                }
+            }
+            Text("Keepwatch records this only while it is running. macOS doesn't say which app uses the camera.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Keepwatch's own activity log, newest first, 15 per page.
+struct ActivityLogView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var page = 0
+    @State private var confirmClear = false
+    static let pageSize = 15
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Every change Keepwatch makes to your Mac or other apps: sleep settings, lid sessions, the mic, quitting apps, stopping processes, Mac tweaks, updates and permissions. Kept on this Mac only (readable by you alone), up to \(AuditLog.maxEntries) entries.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            if model.auditLog.entries.isEmpty {
+                Text("Nothing yet.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(model.auditLog.page(page, size: Self.pageSize)) { e in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(e.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).monospacedDigit()
+                        .foregroundStyle(.secondary).frame(width: 130, alignment: .leading)
+                    Text(e.action).font(.system(size: 12, weight: .semibold))
+                    Text(e.detail).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+            }
+            HStack {
+                let pages = model.auditLog.pageCount(size: Self.pageSize)
+                if pages > 1 {
+                    Button("Newer") { page = max(0, page - 1) }.disabled(page == 0)
+                    Text("Page \(min(page, pages - 1) + 1) of \(pages)").font(.caption).foregroundStyle(.secondary)
+                    Button("Older") { page = min(pages - 1, page + 1) }.disabled(page >= pages - 1)
+                }
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(model.auditLog.text(), forType: .string)
+                }
+                Button("Show file") { NSWorkspace.shared.activateFileViewerSelecting([AuditLog.defaultURL()]) }
+                Button("Clear…") { confirmClear = true }
+            }
+            .controlSize(.small)
+        }
+        .confirmationDialog("Clear the activity log?", isPresented: $confirmClear) {
+            Button("Clear", role: .destructive) { model.clearAuditLog(); page = 0 }
+        } message: { Text("A note that you cleared it stays.") }
+    }
+}
+
 /// A rounded search box that filters a list as you type.
 struct SearchField: View {
     @Binding var text: String
@@ -911,51 +998,6 @@ struct AboutCard: View {
 }
 
 /// The difference between the two ways to stay awake, in two lines.
-/// The two ways to stay awake, as two cards you pick between; each says what
-/// it does, so the difference is clear before choosing.
-struct AwakeModePicker: View {
-    @Binding var selection: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Is your laptop open or closed while it works?").font(.system(size: 13, weight: .semibold))
-            HStack(spacing: 10) {
-                mode("Lid open", icon: "laptopcomputer", title: "Laptop stays open",
-                     "Your Mac won't sleep while you step away. If you close the lid, it sleeps as usual. No password.")
-                mode("Lid closed", icon: "laptopcomputer.slash", title: "Laptop closed",
-                     "Agents keep working with the lid shut. Sleeps by itself when time is up. Asks for your password once.")
-            }
-            .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func mode(_ key: String, icon: String, title: String, _ text: String) -> some View {
-        let selected = selection == key
-        return Button { withAnimation(.snappy(duration: 0.2)) { selection = key } } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(selected ? Color.black.opacity(0.85) : Brand.teal)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(selected ? AnyShapeStyle(Brand.teal) : AnyShapeStyle(Brand.teal.opacity(0.14))))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.system(size: 13, weight: .semibold))
-                    Text(text).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(10)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(selected ? Brand.teal.opacity(0.10) : Color.primary.opacity(0.04)))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(selected ? Brand.teal.opacity(0.7) : Color.primary.opacity(0.06), lineWidth: selected ? 1.5 : 1))
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 /// Keeps chat and meeting apps from marking you away.
 struct StayActiveRow: View {
     @EnvironmentObject var model: AppModel

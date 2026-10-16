@@ -70,4 +70,21 @@ public enum DemoData {
         }
         return BatteryHistory(readings: readings)
     }
+
+    public static func awaySummary(now: Date) -> AwayLog.Summary {
+        AwayLog.Summary(start: now.addingTimeInterval(-2 * 3_600 - 10 * 60), end: now, events: [
+            .init(date: now.addingTimeInterval(-95 * 60), icon: "hourglass", text: "“Fix the checkout redirect” went quiet"),
+            .init(date: now.addingTimeInterval(-40 * 60), icon: "checkmark.circle.fill", text: "Codex finished"),
+        ], batteryStart: 96, batteryEnd: 82)
+    }
+
+    public static func auditLog(now: Date) -> AuditLog {
+        var log = AuditLog()
+        log.append("Keep awake", "until 5:00 PM", at: now.addingTimeInterval(-3 * 3_600))
+        log.append("Lid session started", "sleep after 3 h closed", at: now.addingTimeInterval(-2 * 3_600))
+        log.append("Microphone muted", "lid closed", at: now.addingTimeInterval(-2 * 3_600 + 60))
+        log.append("Lid session end requested", "all agents finished", at: now.addingTimeInterval(-30 * 60))
+        log.append("Quit app", "Music", at: now.addingTimeInterval(-5 * 60))
+        return log
+    }
 }

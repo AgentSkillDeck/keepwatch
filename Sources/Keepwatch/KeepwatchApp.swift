@@ -119,11 +119,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         completionHandler([.banner, .sound])
     }
 
-    /// Clicking a camera alert, or its button, opens the Camera permission list.
+    /// Clicking an alert: camera opens the Camera list, an agent alert brings its
+    /// terminal forward, a Screen Sharing alert opens Sharing settings.
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        if response.notification.request.content.categoryIdentifier == AppModel.cameraCategory {
+        let content = response.notification.request.content
+        switch content.categoryIdentifier {
+        case AppModel.cameraCategory:
             Task { @MainActor in AppModel.shared.open(.camera) }
+        case AppModel.agentCategory:
+            // Bring forward the terminal the waiting agent runs in.
+            if let pid = content.userInfo["hostPID"] as? Int, let pid32 = Int32(exactly: pid), pid32 > 0 {
+                Task { @MainActor in _ = NSRunningApplication(processIdentifier: pid32)?.activate() }
+            }
+        case AppModel.screenCategory:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
+                Task { @MainActor in NSWorkspace.shared.open(url) }
+            }
+        default: break
         }
         completionHandler()
     }

@@ -899,3 +899,151 @@ final class MenuSectionTests: XCTestCase {
         XCTAssertEqual(MenuSection.toggle(.privacy, in: [.privacy, .memory]), [.memory])
     }
 }
+
+final class HostAppTests: XCTestCase {
+    func testWalksUpToTheNearestApp() {
+        let parents: [Int32: Int32] = [500: 400, 400: 300, 300: 200]
+        let chain = HostApp.ancestors(of: 500, parent: { parents[$0] })
+        XCTAssertEqual(chain, [400, 300, 200])
+        XCTAssertEqual(HostApp.host(of: 500, parent: { parents[$0] }, isApp: { $0 == 300 || $0 == 200 }), 300)
+        XCTAssertNil(HostApp.host(of: 500, parent: { parents[$0] }, isApp: { _ in false }))
+    }
+
+    func testCyclesAndDepthAreBounded() {
+        XCTAssertEqual(HostApp.ancestors(of: 1, parent: { $0 == 1 ? 2 : 1 }), [2], "a cycle stops")
+        XCTAssertEqual(HostApp.ancestors(of: 1, parent: { $0 + 1 }).count, HostApp.maxDepth)
+    }
+
+    func testRealParentOfThisProcess() {
+        XCTAssertEqual(HostApp.parentPID(of: getpid()), getppid() > 1 ? getppid() : nil)
+        XCTAssertNil(HostApp.parentPID(of: -5))
+    }
+}
+
+final class AwayLogTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testSummarisesALongAbsence() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 82)
+        log.record(.init(date: t0.addingTimeInterval(600), icon: "checkmark", text: "Claude Code finished"))
+        let s = log.comeBack(at: t0.addingTimeInterval(7_800), battery: 61)
+        XCTAssertEqual(s?.duration, 7_800)
+        XCTAssertEqual(s?.events.map(\.text), ["Claude Code finished"])
+        XCTAssertEqual(s?.batteryUsed, 21)
+        XCTAssertFalse(log.isAway)
+    }
+
+    func testShortQuietAbsenceIsSkipped() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 50)
+        XCTAssertNil(log.comeBack(at: t0.addingTimeInterval(120), battery: 50))
+    }
+
+    func testShortAbsenceWithEventsIsReported() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: nil)
+        log.record(.init(date: t0, icon: "x", text: "Lid session ended"))
+        XCTAssertNotNil(log.comeBack(at: t0.addingTimeInterval(60), battery: nil))
+    }
+
+    func testEventsOnlyWhileAwayAndCharging() {
+        var log = AwayLog()
+        log.record(.init(date: t0, icon: "x", text: "ignored"))
+        log.leave(at: t0, battery: 40)
+        log.leave(at: t0.addingTimeInterval(500), battery: 10) // a second "leave" doesn't restart it
+        let s = log.comeBack(at: t0.addingTimeInterval(3_600), battery: 70)
+        XCTAssertEqual(s?.events, [])
+        XCTAssertNil(s?.batteryUsed, "charged while away")
+        XCTAssertEqual(s?.start, t0)
+        XCTAssertNil(log.comeBack(at: t0, battery: 1), "not away")
+    }
+
+    func testClockGoingBackwardsIsIgnored() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 1)
+        XCTAssertNil(log.comeBack(at: t0.addingTimeInterval(-50), battery: 1))
+    }
+}
+
+final class AuditLogTests: XCTestCase {
+    func testAppendCleansAndCaps() {
+        var log = AuditLog()
+        log.append("Quit app", "Evil\nName\u{1b}[31m")
+        XCTAssertEqual(log.entries.last?.detail, "Evil Name [31m", "no line breaks or escapes")
+        log.append("x", String(repeating: "a", count: 1_000))
+        XCTAssertEqual(log.entries.last?.detail.count, AuditLog.maxTextLength)
+        for i in 0..<(AuditLog.maxEntries + 5) { log.append("n", "\(i)") }
+        XCTAssertEqual(log.entries.count, AuditLog.maxEntries)
+        XCTAssertEqual(log.entries.last?.detail, "\(AuditLog.maxEntries + 4)", "oldest dropped first")
+    }
+
+    func testPagingNewestFirst() {
+        var log = AuditLog()
+        for i in 0..<25 { log.append("n", "\(i)", at: Date(timeIntervalSince1970: TimeInterval(i))) }
+        XCTAssertEqual(log.page(0, size: 10).first?.detail, "24")
+        XCTAssertEqual(log.page(2, size: 10).count, 5)
+        XCTAssertEqual(log.page(9, size: 10), log.page(2, size: 10))
+        XCTAssertEqual(log.pageCount(size: 10), 3)
+        XCTAssertEqual(AuditLog().page(0, size: 10), [])
+        XCTAssertEqual(log.page(0, size: 0), [])
+    }
+
+    func testSaveLoadIsPrivateAndLenient() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kwa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("log.json")
+        var log = AuditLog()
+        log.append("Lid session started", "sleep after 3 h", at: Date(timeIntervalSince1970: 100))
+        XCTAssertTrue(log.save(to: url))
+        XCTAssertEqual(AuditLog.load(from: url), log)
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)
+        try Data("garbage".utf8).write(to: url)
+        XCTAssertEqual(AuditLog.load(from: url), AuditLog())
+        XCTAssertEqual(AuditLog.load(from: dir.appendingPathComponent("missing.json")), AuditLog())
+        XCTAssertTrue(log.text().hasSuffix("Lid session started: sleep after 3 h"))
+    }
+}
+
+final class PrivacyUsageTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testPairsOnAndOffPerApp() {
+        let log = PrivacyLog(events: [
+            PrivacyEvent(date: t0, device: .mic, on: true, apps: ["Zoom"]),
+            PrivacyEvent(date: t0.addingTimeInterval(600), device: .mic, on: false),
+            PrivacyEvent(date: t0.addingTimeInterval(700), device: .mic, on: true, apps: ["Zoom"]),
+            PrivacyEvent(date: t0.addingTimeInterval(1_000), device: .mic, on: false),
+            PrivacyEvent(date: t0.addingTimeInterval(100), device: .camera, on: true),
+            PrivacyEvent(date: t0.addingTimeInterval(160), device: .camera, on: false),
+        ])
+        let u = log.usage(since: t0, now: t0.addingTimeInterval(2_000))
+        XCTAssertEqual(u.first, PrivacyUsage(app: "Zoom", device: .mic, sessions: 2, seconds: 900))
+        XCTAssertEqual(u.last, PrivacyUsage(app: PrivacyUsage.unknownCamera, device: .camera, sessions: 1, seconds: 60))
+    }
+
+    func testStillOnCountsToNowAndOldTimeIsCut() {
+        let log = PrivacyLog(events: [
+            PrivacyEvent(date: t0, device: .mic, on: true, apps: ["FaceTime"]),
+            PrivacyEvent(date: t0.addingTimeInterval(-5_000), device: .camera, on: true),
+            PrivacyEvent(date: t0.addingTimeInterval(-4_000), device: .camera, on: false),
+        ])
+        let u = log.usage(since: t0.addingTimeInterval(-100), now: t0.addingTimeInterval(300))
+        XCTAssertEqual(u, [PrivacyUsage(app: "FaceTime", device: .mic, sessions: 1, seconds: 300)], "camera use ended before `since`")
+    }
+
+    func testOffWithoutOnAndEmptyLog() {
+        XCTAssertEqual(PrivacyLog().usage(since: t0, now: t0), [])
+        let log = PrivacyLog(events: [PrivacyEvent(date: t0, device: .mic, on: false)])
+        XCTAssertEqual(log.usage(since: .distantPast, now: t0), [])
+    }
+}
+
+final class ScreenWatchTests: XCTestCase {
+    func testWatchers() {
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["Finder", "replayd"]), [], "replayd always runs; not a signal")
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screensharingd"]), [.remoteViewer])
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screencapture", "screensharingd"]), [.remoteViewer, .capture])
+    }
+}

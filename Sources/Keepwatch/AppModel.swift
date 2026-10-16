@@ -4,6 +4,7 @@ import Foundation
 import KeepwatchCore
 import ServiceManagement
 import UserNotifications
+import os
 
 /// Everything the UI shows and every action it can take. Polls once every two
 /// seconds; all system reads are cheap and none of them prompt for permission.
@@ -46,6 +47,17 @@ final class AppModel: ObservableObject {
     @Published var keepDisplayAwake: Bool { didSet { defaults.set(keepDisplayAwake, forKey: "keepDisplayAwake"); apply() } }
     @Published var notifyWhenAgentsFinish: Bool { didSet { defaults.set(notifyWhenAgentsFinish, forKey: "notifyAgents") } }
     @Published var muteMicWhenLidCloses: Bool { didSet { defaults.set(muteMicWhenLidCloses, forKey: "muteOnLid") } }
+    @Published var muteMicOnLock: Bool { didSet { defaults.set(muteMicOnLock, forKey: "muteOnLock") } }
+    private var mutedByLock = false
+    private var screenLocked = false
+    /// Someone connected with Screen Sharing, or a capture in progress.
+    @Published private(set) var screenWatchers: [ScreenWatch.Watcher] = []
+    /// What happened while you were away; shown once in the menu.
+    @Published var awaySummary: AwayLog.Summary?
+    private var awayLog = AwayLog()
+    /// Every change Keepwatch makes to the Mac or other apps (Settings › Activity log).
+    @Published private(set) var auditLog = AuditLog()
+    static let logger = Logger(subsystem: "app.keepwatch.Keepwatch", category: "activity")
     @Published var endLidSessionWhenAgentsFinish: Bool { didSet { defaults.set(endLidSessionWhenAgentsFinish, forKey: "lidEndsWithAgents") } }
     @Published var lidHours: Double { didSet { defaults.set(lidHours, forKey: "lidHours") } }
     @Published var lidAllowBattery: Bool { didSet { defaults.set(lidAllowBattery, forKey: "lidBattery") } }
@@ -83,6 +95,7 @@ final class AppModel: ObservableObject {
     @Published var stayActive: Bool {
         didSet {
             defaults.set(stayActive, forKey: "stayActive")
+            if stayActive != oldValue { audit(stayActive ? "Stay active turned on" : "Stay active turned off") }
             if stayActive { requestAccessibility() }
         }
     }
@@ -128,6 +141,7 @@ final class AppModel: ObservableObject {
         keepDisplayAwake = defaults.bool(forKey: "keepDisplayAwake")
         notifyWhenAgentsFinish = defaults.object(forKey: "notifyAgents") as? Bool ?? true
         muteMicWhenLidCloses = defaults.bool(forKey: "muteOnLid")
+        muteMicOnLock = defaults.bool(forKey: "muteOnLock")
         endLidSessionWhenAgentsFinish = defaults.object(forKey: "lidEndsWithAgents") as? Bool ?? true
         lidHours = defaults.object(forKey: "lidHours") as? Double ?? 3
         lidAllowBattery = defaults.object(forKey: "lidBattery") as? Bool ?? true // on battery above 20% by default
@@ -167,6 +181,21 @@ final class AppModel: ObservableObject {
             let hours = LidRequest.hours(from: note.userInfo)
             Task { @MainActor in AppModel.shared.handleLidRequest(hours: hours) }
         }
+        if !demo { auditLog = AuditLog.load() }
+        let workspace = NSWorkspace.shared.notificationCenter
+        workspace.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in AppModel.shared.userLeft() }
+        }
+        workspace.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { _ in
+            Task { @MainActor in AppModel.shared.screensWoke() }
+        }
+        let distributed = DistributedNotificationCenter.default()
+        distributed.addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { _ in
+            Task { @MainActor in AppModel.shared.screenLockChanged(locked: true) }
+        }
+        distributed.addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { _ in
+            Task { @MainActor in AppModel.shared.screenLockChanged(locked: false) }
+        }
         checkLidSessionOnLaunch()
         if stayActive && !AXIsProcessTrusted() {
             banner = Banner(text: "Stay active needs Keepwatch turned on in Accessibility. If it is already on, turn it off and on again (macOS keeps the old app's permission after an update).",
@@ -182,6 +211,7 @@ final class AppModel: ObservableObject {
     // MARK: Keep awake
 
     func setMode(_ newMode: KeepAwakeMode) {
+        if newMode != mode { audit("Keep awake", Self.describe(newMode)) }
         if case .until(let end) = newMode { timedLength = end.timeIntervalSinceNow } else { timedLength = nil }
         engine.set(newMode)
         mode = engine.mode
@@ -234,6 +264,7 @@ final class AppModel: ObservableObject {
         let processes = ProcessList.snapshot(wantArguments: matcher.isCandidate)
         let running = matcher.runningAgents(in: processes)
         if running != agents { agents = running }
+        if tickCount % 2 == 0 { updateScreenWatchers(Set(processes.map(\.name))) }
         let sessions = matcher.sessions(in: processes)
         if sessions != agentSessions { agentSessions = sessions }
         trackAgentActivity(now: now)
@@ -291,8 +322,10 @@ final class AppModel: ObservableObject {
     private func handle(_ event: KeepAwakeEngine.Event) {
         switch event {
         case .agentFinished(let name):
+            awayLog.record(.init(date: Date(), icon: "checkmark.circle.fill", text: "\(name) finished"))
             if notifyWhenAgentsFinish { notify("\(name) finished", "No \(name) process is running any more.") }
         case .timerEnded:
+            awayLog.record(.init(date: Date(), icon: "moon.zzz.fill", text: "Keep-awake time ran out"))
             notify("Keep-awake ended", "Your Mac can sleep normally again.")
         case .agentsIdle:
             break // lid sessions track agents themselves in superviseLidSession
@@ -307,6 +340,7 @@ final class AppModel: ObservableObject {
         guard let closed, let previous = lastLidClosed, closed != previous else { return }
         if closed, muteMicWhenLidCloses, privacy.micMuted == false {
             mutedByLid = PrivacyMonitor.setMicMuted(true)
+            if mutedByLid { audit("Microphone muted", "lid closed") }
         } else if !closed, mutedByLid {
             PrivacyMonitor.setMicMuted(false)
             mutedByLid = false
@@ -358,7 +392,14 @@ final class AppModel: ObservableObject {
         guard notifyAgentWaiting else { return }
         for pid in quiet {
             guard let s = agentSessions.first(where: { $0.pid == pid }) else { continue }
-            notify("\(s.agent) went quiet", "In \(s.folderName ?? "a session"). It may be done, or waiting for you.")
+            let name = sessionTitles[pid]
+            awayLog.record(.init(date: now, icon: "hourglass", text: "\(name.map { "“\($0)”" } ?? s.agent) went quiet"))
+            let host = HostApp.host(of: pid) { NSRunningApplication(processIdentifier: $0)?.activationPolicy == .regular }
+            let hostName = host.flatMap { NSRunningApplication(processIdentifier: $0)?.localizedName }
+            notify(name.map { "“\($0)” is waiting" } ?? "\(s.agent) went quiet",
+                   "\(s.agent) in \(s.folderName ?? "a session"). It may be done, or waiting for your answer."
+                       + (hostName.map { " Click to open \($0)." } ?? ""),
+                   category: Self.agentCategory, userInfo: host.map { ["hostPID": Int($0)] } ?? [:])
         }
     }
 
@@ -399,12 +440,15 @@ final class AppModel: ObservableObject {
     }
 
     nonisolated static let cameraCategory = "camera-on"
+    nonisolated static let agentCategory = "agent-waiting"
+    nonisolated static let screenCategory = "screen-watched"
     nonisolated static let openCameraAction = "open-camera-settings"
 
     /// Takes camera permission back from every app (`tccutil reset Camera`), so
     /// each one has to ask again. Apps already open keep access until they quit.
     func resetCameraPermissions() {
         let ok = (SystemState.run("/usr/bin/tccutil", ["reset", "Camera"]) ?? "").contains("Successfully")
+        audit("Camera access reset for every app", ok ? "done" : "failed")
         notify(ok ? "Camera access reset" : "Couldn't reset camera access",
                ok ? "Every app now has to ask before using the camera. Apps that are open keep access until you quit them."
                   : "Open the Camera list in System Settings to remove apps by hand.")
@@ -425,7 +469,11 @@ final class AppModel: ObservableObject {
 
     func toggleMicMute() {
         guard let muted = privacy.micMuted else { return }
-        if PrivacyMonitor.setMicMuted(!muted) { mutedByLid = false }
+        if PrivacyMonitor.setMicMuted(!muted) {
+            mutedByLid = false
+            mutedByLock = false
+            audit(muted ? "Microphone unmuted" : "Microphone muted", "you clicked")
+        }
         privacy = PrivacyMonitor.snapshot()
     }
 
@@ -471,6 +519,9 @@ final class AppModel: ObservableObject {
         runAdmin(script) { [weak self] ok, message in
             guard let self else { return }
             self.lidBusy = false
+            self.audit(ok ? "Lid session started" : "Lid session not started",
+                       ok ? "sleep after \(Format.duration(plan.afterLidClosed ?? 0)) closed, at most until \(Date().addingTimeInterval(TimeInterval(LidWatchdog.deadlineSeconds(plan, now: now))).formatted(date: .omitted, time: .shortened))"
+                          : message)
             if !ok {
                 self.saveIntent(.off)
                 if !message.contains("-128") { self.banner = Banner(text: "Lid session not started: \(message)", action: nil) }
@@ -484,6 +535,7 @@ final class AppModel: ObservableObject {
         // Only the watchdog reads the stop file. If it is gone, the stop file
         // would do nothing, so turn sleep back on directly (password prompt).
         guard watchdogAlive() else { restoreSleepNow(); return }
+        audit("Lid session end requested", reason)
         FileManager.default.createFile(atPath: stopFile.path, contents: Data(reason.utf8))
         lidStopRequestedAt = Date()
         notify("Lid session ending", "Sleep turns back on within 30 seconds (\(reason)).")
@@ -498,6 +550,7 @@ final class AppModel: ObservableObject {
         runAdmin(script) { [weak self] ok, _ in
             guard let self else { return }
             if ok { self.saveIntent(.off); self.banner = nil }
+            self.audit(ok ? "Sleep turned back on" : "Turning sleep back on failed", "with your password")
             self.pmset = SystemState.pmsetSettings()
         }
     }
@@ -578,6 +631,9 @@ final class AppModel: ObservableObject {
     }
 
     private func saveIntent(_ intent: LidModeIntent) {
+        if lidIntent.enabled && !intent.enabled {
+            awayLog.record(.init(date: Date(), icon: "laptopcomputer", text: "Lid session ended; sleep is back on"))
+        }
         lidIntent = intent
         if !intent.enabled { lidStopRequestedAt = nil; lidRescuePrompted = false; lidWatchdogRunning = nil }
         if let data = try? JSONEncoder().encode(intent) { defaults.set(data, forKey: "lidIntent") }
@@ -620,6 +676,7 @@ final class AppModel: ObservableObject {
 
     /// Quits one agent session, after the UI asked the user to confirm.
     func stopAgent(_ session: AgentSession) {
+        audit("Stopped agent session", "\(session.agent) in \(session.folderName ?? "unknown folder") (pid \(session.pid))")
         _ = matcher.stop(session, current: ProcessList.snapshot(wantArguments: matcher.isCandidate))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.tick() }
     }
@@ -643,6 +700,8 @@ final class AppModel: ObservableObject {
         let now = Date()
         let left: TimeInterval = 2 * 3_600 + 41 * 60
         mode = .until(now.addingTimeInterval(left))
+        awaySummary = DemoData.awaySummary(now: now)
+        auditLog = DemoData.auditLog(now: now)
         remaining = left
         timedLength = 3 * 3_600
         holding = true
@@ -670,6 +729,7 @@ final class AppModel: ObservableObject {
     /// Never macOS's own processes or Keepwatch itself.
     func quitApp(_ app: AppUsage) {
         guard !app.isSystem else { return }
+        audit("Quit app", app.name)
         let running = NSWorkspace.shared.runningApplications.filter { $0.bundleURL?.path == app.path }
         if !running.isEmpty {
             for r in running where r.processIdentifier != getpid() { r.terminate() }
@@ -680,6 +740,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopProcess(_ port: ListeningPort) {
+        audit("Stopped process", "\(port.process) on port \(port.port) (pid \(port.pid))")
         ListeningPorts.stop(pid: port.pid)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.refreshPorts() }
     }
@@ -687,6 +748,7 @@ final class AppModel: ObservableObject {
     // MARK: Command-line tool
 
     func installCLI() {
+        audit("Installed the keepwatch command")
         let cli = Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/keepwatch-cli").path
         switch CLIInstaller.install(cliPath: cli) {
         case .installed(let link), .alreadyInstalled(let link):
@@ -701,11 +763,13 @@ final class AppModel: ObservableObject {
     // MARK: Toggles, login item, panes
 
     func setToggle(_ t: QuickToggle, _ value: Bool) {
+        audit("Mac tweak", "\(t.title): \(value ? "on" : "off")")
         t.write(value)
         toggles[t] = t.read()
     }
 
     func setLaunchAtLogin(_ on: Bool) {
+        audit(on ? "Open at login turned on" : "Open at login turned off")
         do {
             if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
         } catch {
@@ -740,6 +804,7 @@ final class AppModel: ObservableObject {
 
     /// Asks macOS to list Keepwatch under Accessibility (only when Stay active is turned on).
     func requestAccessibility() {
+        if !AXIsProcessTrusted() { audit("Asked macOS for Accessibility", "for Stay active") }
         let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
         accessibilityTrusted = AXIsProcessTrustedWithOptions(options)
     }
@@ -802,6 +867,8 @@ final class AppModel: ObservableObject {
         Task { @MainActor in
             let failure = await UpdateInstaller.install(release, over: installed, current: Self.currentVersion)
             updateInstalling = false
+            audit(failure == nil ? "Update installed" : "Update not installed",
+                  failure.map { "\(release.version): \($0)" } ?? "\(Self.currentVersion) → \(release.version)")
             if let failure {
                 updateStatus = "\(failure) Nothing was changed; you can download it from the release page."
                 return
@@ -842,7 +909,7 @@ final class AppModel: ObservableObject {
 
     private var notificationsAsked = false
 
-    private func notify(_ title: String, _ body: String, category: String? = nil) {
+    private func notify(_ title: String, _ body: String, category: String? = nil, userInfo: [String: Int] = [:]) {
         guard Bundle.main.bundleIdentifier != nil else { return } // not running from an .app
         let center = UNUserNotificationCenter.current()
         let sound = notificationSound
@@ -851,12 +918,101 @@ final class AppModel: ObservableObject {
             content.title = title
             content.body = body
             if let category { content.categoryIdentifier = category }
+            content.userInfo = userInfo
             if sound { content.sound = .default }
             center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
         }
         if notificationsAsked { send(); return }
         notificationsAsked = true
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in if granted { send() } }
+    }
+
+    // MARK: Away summary, lock and screen sharing
+
+    func userLeft() {
+        guard !demo else { return }
+        awayLog.leave(at: Date(), battery: power?.batteryPercent)
+    }
+
+    /// The screens woke. If the Mac is still locked you aren't back yet.
+    func screensWoke() {
+        guard !screenLocked else { return }
+        cameBack()
+    }
+
+    func screenLockChanged(locked: Bool) {
+        screenLocked = locked
+        if locked {
+            userLeft()
+            if muteMicOnLock, privacy.micMuted == false, PrivacyMonitor.setMicMuted(true) {
+                mutedByLock = true
+                audit("Microphone muted", "screen locked")
+            }
+        } else {
+            if mutedByLock {
+                PrivacyMonitor.setMicMuted(false)
+                mutedByLock = false
+                audit("Microphone unmuted", "screen unlocked")
+            }
+            cameBack()
+        }
+        privacy = PrivacyMonitor.snapshot()
+    }
+
+    private func cameBack() {
+        refreshSlow()
+        if let summary = awayLog.comeBack(at: Date(), battery: power?.batteryPercent) { awaySummary = summary }
+    }
+
+    private func updateScreenWatchers(_ names: Set<String>) {
+        let now = ScreenWatch.watchers(processNames: names)
+        guard now != screenWatchers else { return }
+        let started = now.filter { !screenWatchers.contains($0) }
+        screenWatchers = now
+        if started.contains(.remoteViewer) {
+            audit("Screen Sharing connection seen")
+            awayLog.record(.init(date: Date(), icon: "rectangle.on.rectangle", text: "Someone connected with Screen Sharing"))
+            if alertOnMicCamera {
+                notify("Someone is connected to your screen", "Screen Sharing is active. Not expected? Open Sharing settings.",
+                       category: Self.screenCategory)
+            }
+        }
+    }
+
+    /// How a mode reads in the activity log.
+    static func describe(_ mode: KeepAwakeMode) -> String {
+        switch mode {
+        case .off: "off"
+        case .indefinite: "until turned off"
+        case .until(let end): "until \(end.formatted(date: .abbreviated, time: .shortened))"
+        case .whileAgentsRun: "while AI agents run"
+        @unknown default: "changed"
+        }
+    }
+
+    /// Adds to the activity log (and the system log, for Console).
+    func audit(_ action: String, _ detail: String = "") {
+        guard !demo else { return }
+        auditLog.append(action, detail)
+        auditLog.save()
+        Self.logger.notice("\(action, privacy: .public) \(detail, privacy: .private)")
+    }
+
+    func clearAuditLog() {
+        auditLog.clear()
+        auditLog.save()
+        audit("Activity log cleared")
+    }
+
+    /// The Mac's temperature in plain words, for lid sessions.
+    var thermalText: String {
+        switch ProcessInfo.processInfo.thermalState {
+        case .nominal: "Cool"
+        case .fair: "Warm"
+        case .serious: "Hot"
+        case .critical: "Very hot"
+        @unknown default: "Unknown"
+        }
     }
 
     func quit() {

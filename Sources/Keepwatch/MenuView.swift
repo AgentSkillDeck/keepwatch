@@ -12,6 +12,7 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 14) {
             StatusHeader()
             if let banner = model.banner { BannerView(banner: banner) }
+            if let away = model.awaySummary { AwaySummaryCard(summary: away) }
             ForEach(model.menuSections) { section in
                 switch section {
                 case .privacy: PrivacySwitches(compact: true)
@@ -284,6 +285,7 @@ struct PrivacySwitches: View {
                           ? "Opens the Camera list in System Settings. Switch the app off there to stop it."
                           : "No app is using the camera")
             }
+            ScreenWatchRows()
         }
     }
 
@@ -325,8 +327,11 @@ struct PrivacySwitches: View {
             .help("macOS has no switch that turns the camera off for every app. Keepwatch shows when it's on and can alert you.")
             SwitchRow(icon: "bell.badge", title: "Alert me",
                       subtitle: "When the mic or camera turns on", isOn: $model.alertOnMicCamera)
+            ScreenWatchRows()
             SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute mic when lid closes",
                       subtitle: "Unmutes when you open it", isOn: $model.muteMicWhenLidCloses)
+            SwitchRow(icon: "lock.fill", title: "Mute mic when the screen locks",
+                      subtitle: "Unmutes when you unlock", isOn: $model.muteMicOnLock)
         }
     }
 
@@ -343,6 +348,66 @@ struct PrivacySwitches: View {
             return who.isEmpty ? "In use" : "In use by " + who.joined(separator: ", ")
         }
         return "Not in use"
+    }
+}
+
+/// What happened while you were away, shown once when you come back.
+struct AwaySummaryCard: View {
+    @EnvironmentObject var model: AppModel
+    let summary: AwayLog.Summary
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("While you were away · \(Format.duration(summary.duration))", systemImage: "figure.walk.arrival")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                Button { model.awaySummary = nil } label: { Image(systemName: "xmark").font(.caption.weight(.bold)) }
+                    .buttonStyle(.borderless).foregroundStyle(.secondary).help("Dismiss")
+            }
+            if summary.events.isEmpty {
+                Text("Nothing happened.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(summary.events.suffix(5)) { e in
+                HStack(spacing: 6) {
+                    Image(systemName: e.icon).font(.caption).foregroundStyle(Brand.teal).frame(width: 14)
+                    Text(e.text).font(.caption).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(e.date.formatted(date: .omitted, time: .shortened)).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+            if summary.events.count > 5 {
+                Text("and \(summary.events.count - 5) more").font(.caption2).foregroundStyle(.secondary)
+            }
+            if let used = summary.batteryUsed, let end = summary.batteryEnd {
+                Label("Battery used \(used)% (now \(end)%)", systemImage: "battery.50percent")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Brand.teal.opacity(0.10)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Brand.teal.opacity(0.35)))
+    }
+}
+
+/// Red rows when someone may be seeing the screen.
+struct ScreenWatchRows: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        ForEach(model.screenWatchers, id: \.self) { w in
+            Button {
+                if w == .remoteViewer, let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                Label(w.text, systemImage: w == .remoteViewer ? "rectangle.on.rectangle" : "record.circle")
+                    .font(.caption.weight(.semibold)).foregroundStyle(Brand.live)
+                    .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+            }
+            .buttonStyle(.plain)
+            .help(w == .remoteViewer ? "Open Sharing settings to turn Screen Sharing off" : "")
+        }
     }
 }
 
@@ -562,6 +627,7 @@ struct LidSessionCard: View {
     @EnvironmentObject var model: AppModel
     var compact: Bool
     @State private var showLidCustom = false
+    @State private var showLidInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -569,8 +635,10 @@ struct LidSessionCard: View {
                 HStack(spacing: 4) {
                     Eyebrow(text: "Laptop closed")
                     if !model.lidIntent.enabled {
-                        Image(systemName: "info.circle").font(.caption).foregroundStyle(.secondary)
-                            .help("Keeps working with the lid shut, then sleeps by itself after the time you pick. Asks for your password once.")
+                        Button { withAnimation(.snappy) { showLidInfo.toggle() } } label: {
+                            Image(systemName: showLidInfo ? "info.circle.fill" : "info.circle").font(.caption)
+                        }
+                        .buttonStyle(.borderless).foregroundStyle(.secondary)
                     }
                     Spacer()
                     if model.lidIntent.enabled, let end = model.lidIntent.expires {
@@ -578,6 +646,10 @@ struct LidSessionCard: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+            }
+            if compact && showLidInfo && !model.lidIntent.enabled {
+                Text("Keeps working with the lid shut, then sleeps by itself after the time you pick. Asks for your password once.")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if model.lidIntent.enabled {
                 HStack(spacing: 10) {
@@ -591,6 +663,9 @@ struct LidSessionCard: View {
                         }
                         Text(endsText).font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                        Label("Temperature: \(model.thermalText). Hot ends the session.", systemImage: "thermometer.medium")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(model.thermalText == "Cool" || model.thermalText == "Warm" ? Color.secondary : Brand.live)
                         if let running = model.lidWatchdogRunning {
                             Label(running ? "Watchdog running" : "Watchdog stopped: sleep won't come back by itself",
                                   systemImage: running ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")

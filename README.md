@@ -57,7 +57,9 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - **Custom:** any number of minutes, hours, days or weeks (up to 30 days), or **until** a date and time.
 - **While AI agents run** keeps the Mac awake only while Claude Code, Codex, Gemini CLI, Aider, OpenCode, Goose, Amp, Cursor Agent, Qwen Code or Crush is running. After the last one exits, it waits a 2-minute grace period, then lets the Mac sleep.
   - Claude Code's idle helpers (the pre-warmed `--bg-spare` process and `claude daemon`) don't count, so they can't keep the Mac awake forever.
-- A notification tells you when an agent finishes.
+- A notification tells you when an agent finishes, and when a session goes quiet it names it ("“Fix the checkout redirect” is waiting"). Clicking it brings forward the terminal the agent runs in.
+- **While you were away:** when you come back (screen wakes or you unlock), the menu shows what happened: agents that finished or started waiting, a lid session that ended, and the battery it cost.
+- Lid sessions show the Mac's temperature and end early if it gets hot.
 - It shows which other apps are also holding the Mac awake (Amphetamine, caffeinate, and so on).
 - Optional: **stop when unplugged**, and **stop at 15% battery** (on by default).
 - Optional: **stay awake automatically while plugged in**, or **while an external display is connected**.
@@ -90,9 +92,11 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - **Which app is using the mic**, from CoreAudio's process list (macOS 14+).
 - A **mic switch** that mutes the mic for every app.
 - **Camera status**, with **Turn off…** while it is live: macOS has no switch that turns the camera off for every app, so this opens the Camera list in System Settings, where switching an app off stops it using the camera. Also an alert when the mic or camera turns on, and **Reset camera access**, which makes every app ask again.
-- A **history** of when the mic and camera turned on and off, kept only on this Mac.
+- A **history** of when the mic and camera turned on and off, kept only on this Mac, and **By app**: how many times and how long each app used the mic or camera today, in 7 days or in 30 days.
+- **Screen Sharing alert:** a red warning (and a notification) while someone is connected to this Mac with Screen Sharing or Remote Management. Apps that record the screen themselves get macOS's own purple indicator; there is no public way for another app to see those.
 - **Security checks** (read-only): firewall, FileVault, Gatekeeper, System Integrity Protection, AirDrop.
-- **Mute the mic when the lid closes**, and unmute it when the lid opens.
+- **Mute the mic when the lid closes** or **when the screen locks**, and unmute it when you're back.
+- **Activity log** (Settings › Activity log): every change Keepwatch makes to your Mac or other apps, such as sleep settings, lid sessions, the mic, quitting apps, stopping processes, Mac tweaks, updates and permission requests. It stays on this Mac, readable by you alone, up to 1,000 entries, with Copy and Clear.
 - One-click links to the System Settings privacy lists: Camera, Microphone, Screen Recording, Accessibility, Full Disk Access, Automation, Location.
 - Keepwatch needs **no** mic, camera or Full Disk Access permission. Accessibility is asked for only if you turn on **Stay active**. It never captures anything; it only asks the system whether a device is running.
 
