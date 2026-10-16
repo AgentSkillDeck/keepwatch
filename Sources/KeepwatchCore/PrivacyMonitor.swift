@@ -57,7 +57,10 @@ public enum PrivacyMonitor {
         let inputs = audioInputDevices()
         let running = inputs.filter { audioDeviceIsRunningSomewhere($0) }
         let cameras = cameraDevices().filter { cameraIsRunningSomewhere($0) }
-        let mutes = inputs.map { canSetMute($0) ? inputMute($0) : nil }
+        // Virtual devices (Teams Audio, loopback drivers) pass audio between
+        // apps and often ignore mute, so only real mics decide "muted".
+        let real = inputs.filter { !isVirtual($0) }
+        let mutes = real.map { canSetMute($0) ? inputMute($0) : nil }
         return PrivacySnapshot(
             micInUse: !running.isEmpty,
             cameraInUse: !cameras.isEmpty,
@@ -65,7 +68,7 @@ public enum PrivacyMonitor {
             micMuted: PrivacySnapshot.combinedMute(mutes),
             liveMics: running.map { string($0, kAudioObjectPropertyName) ?? "Microphone" },
             liveCameras: cameras.map { cameraName($0) ?? "Camera" },
-            unmutableMics: zip(inputs, mutes).filter { $0.1 == nil }.map { string($0.0, kAudioObjectPropertyName) ?? "Microphone" }
+            unmutableMics: zip(real, mutes).filter { $0.1 == nil }.map { string($0.0, kAudioObjectPropertyName) ?? "Microphone" }
         )
     }
 
@@ -156,6 +159,17 @@ public enum PrivacyMonitor {
             }
         }
         return changed
+    }
+
+    /// Virtual or aggregate audio devices, which don't record a microphone themselves.
+    static func isVirtual(_ device: AudioObjectID) -> Bool {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType, mScope: kAudioObjectPropertyScopeGlobal,
+                                                 mElement: kAudioObjectPropertyElementMain)
+        var transport: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &transport) == noErr else { return false }
+        return transport == kAudioDeviceTransportTypeVirtual || transport == kAudioDeviceTransportTypeAggregate
+            || transport == kAudioDeviceTransportTypeAutoAggregate
     }
 
     static func canSetMute(_ device: AudioObjectID) -> Bool {

@@ -13,7 +13,7 @@ struct KeepwatchApp: App {
                 .environmentObject(model)
         } label: {
             MenuBarLabel(holding: model.holding, lidSession: model.lidIntent.enabled,
-                         mic: model.privacy.micInUse, camera: model.privacy.cameraInUse, timer: model.quickTimer)
+                         mic: model.privacy.micInUse, camera: model.privacy.cameraInUse, timer: model.quickTimerLabel)
                 .background(WindowOpenerBridge(model: model))
         }
         .menuBarExtraStyle(.window)
@@ -33,16 +33,12 @@ struct MenuBarLabel: View {
     var lidSession: Bool
     var mic: Bool
     var camera: Bool
-    var timer: QuickTimer?
+    var timer: String?
 
     var body: some View {
         HStack(spacing: 3) {
             Image(systemName: lidSession ? "laptopcomputer" : (holding ? "eye.fill" : "eye"))
-            if let timer {
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    Text(timer.menuBarText(at: ctx.date)).monospacedDigit()
-                }
-            }
+            if let timer { Text(timer).monospacedDigit() }
             if let badge = PrivacyBadge.image(mic: mic, camera: camera) { Image(nsImage: badge) }
         }
         .accessibilityLabel(accessibilityText)

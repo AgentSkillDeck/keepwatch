@@ -49,7 +49,11 @@ final class AppModel: ObservableObject {
     @Published var muteMicWhenLidCloses: Bool { didSet { defaults.set(muteMicWhenLidCloses, forKey: "muteOnLid") } }
     @Published var muteMicOnLock: Bool { didSet { defaults.set(muteMicOnLock, forKey: "muteOnLock") } }
     /// A "back in N minutes" countdown, shown in the menu bar.
-    @Published private(set) var quickTimer: QuickTimer?
+    @Published private(set) var quickTimer: QuickTimer? { didSet { quickTimerChanged() } }
+    /// The menu-bar text for the quick timer ("12m"). Published only when it
+    /// changes, once a minute, because every change redraws the menu bar.
+    @Published private(set) var quickTimerLabel: String?
+    private var quickTimerClock: Timer?
     /// Free disk space, and the big folders (scanned on request).
     @Published private(set) var disk: DiskSpace.Usage?
     @Published var diskWarnGB: Int { didSet { defaults.set(diskWarnGB, forKey: "diskWarnGB") } }
@@ -930,6 +934,8 @@ final class AppModel: ObservableObject {
             privacy = PrivacyMonitor.snapshot()
         case .endLidSession: if lidIntent.enabled { endLidSession(reason: "requested by a shortcut") }
         case .dashboard: showDashboard()
+        case .timer(let minutes): startQuickTimer(minutes: minutes)
+        case .timerCancel: cancelQuickTimer()
         }
     }
 
@@ -968,6 +974,28 @@ final class AppModel: ObservableObject {
     func cancelQuickTimer() {
         if let t = quickTimer, t.keptAwake, case .until = mode { setMode(.off) }
         quickTimer = nil
+    }
+
+    private func quickTimerChanged() {
+        quickTimerClock?.invalidate()
+        quickTimerClock = nil
+        guard let t = quickTimer else { quickTimerLabel = nil; return }
+        quickTimerLabel = t.menuBarText(at: Date())
+        guard !demo else { return }
+        let clock = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.quickTimerTick() }
+        }
+        clock.tolerance = 0.2
+        RunLoop.main.add(clock, forMode: .common)
+        quickTimerClock = clock
+    }
+
+    private func quickTimerTick() {
+        guard let t = quickTimer else { return }
+        let now = Date()
+        let label = t.menuBarText(at: now)
+        if label != quickTimerLabel { quickTimerLabel = label }
+        checkQuickTimer(now: now)
     }
 
     private func checkQuickTimer(now: Date) {

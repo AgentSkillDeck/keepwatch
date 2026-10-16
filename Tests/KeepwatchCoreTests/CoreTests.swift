@@ -203,6 +203,17 @@ final class PowerAssertionTests: XCTestCase {
 final class URLCommandTests: XCTestCase {
     func parse(_ s: String) -> URLCommand? { URL(string: s).flatMap(URLCommand.parse) }
 
+    func testTimerURLs() {
+        XCTAssertEqual(parse("keepwatch://timer?minutes=5"), .timer(minutes: 5))
+        XCTAssertEqual(parse("keepwatch://timer/cancel"), .timerCancel)
+        XCTAssertNil(parse("keepwatch://timer"))
+        XCTAssertNil(parse("keepwatch://timer?minutes=0"))
+        XCTAssertNil(parse("keepwatch://timer?minutes=99999"))
+        XCTAssertEqual(QuickTimer.menuBarText(left: 125), "3m")
+        XCTAssertEqual(QuickTimer.menuBarText(left: 42), "1m", "the menu bar changes once a minute")
+        XCTAssertEqual(QuickTimer.menuBarText(left: .nan), "0m")
+    }
+
     func testParsesCommands() {
         XCTAssertEqual(parse("keepwatch://awake?minutes=90"), .awake(minutes: 90))
         XCTAssertEqual(parse("keepwatch://awake"), .awakeIndefinitely)
@@ -1135,8 +1146,8 @@ final class QuickTimerTests: XCTestCase {
     func testCountdownText() throws {
         let t = try XCTUnwrap(QuickTimer(minutes: 25, now: t0, keepAwake: true))
         XCTAssertEqual(t.menuBarText(at: t0), "25m")
-        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(24 * 60 + 15)), "45s")
-        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(3_000)), "0s")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(24 * 60 + 15)), "1m")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(3_000)), "0m")
         XCTAssertTrue(t.isDone(at: t0.addingTimeInterval(1_500)))
         XCTAssertFalse(t.isDone(at: t0.addingTimeInterval(1_499)))
         XCTAssertEqual(QuickTimer(minutes: 90, now: t0, keepAwake: false)?.menuBarText(at: t0), "1h30")

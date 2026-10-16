@@ -60,24 +60,27 @@ struct MenuView: View {
 /// "Back in N minutes": a countdown that keeps the Mac awake and notifies at the end.
 struct MenuTimer: View {
     @EnvironmentObject var model: AppModel
+    /// Ticks only while the menu is open.
+    @State private var now = Date()
+    private let clock = Timer.publish(every: 1, tolerance: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            MenuHeading("Quick timer", info: "Counts down in the menu bar and keeps the Mac awake.") {
-                if model.quickTimer != nil {
-                    Button("Cancel") { model.cancelQuickTimer() }
-                        .buttonStyle(.borderless).font(.caption.weight(.semibold))
-                }
-            }
+            MenuHeading("Quick timer", info: "Counts down in the menu bar and keeps the Mac awake.")
             if let t = model.quickTimer {
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    HStack {
-                        Image(systemName: "timer").foregroundStyle(Brand.teal)
-                        Text(Format.clock(t.remaining(at: ctx.date)))
+                HStack(spacing: 10) {
+                    Image(systemName: "timer").foregroundStyle(Brand.teal)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(Format.clock(t.remaining(at: now)))
                             .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
-                        Spacer()
                         Text("ends \(t.end.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button { model.cancelQuickTimer() } label: {
+                        Label("Stop timer", systemImage: "stop.fill").frame(minWidth: 110)
+                    }
+                    .buttonStyle(TileButtonStyle(selected: false, height: 34))
+                    .help("Stop the timer")
                 }
             } else {
                 HStack(spacing: 6) {
@@ -88,6 +91,8 @@ struct MenuTimer: View {
                 }
             }
         }
+        .onReceive(clock) { now = $0 }
+        .onAppear { now = Date() }
     }
 }
 

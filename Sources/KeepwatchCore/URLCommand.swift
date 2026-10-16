@@ -14,6 +14,8 @@ public enum URLCommand: Equatable, Sendable {
     case micMute(Bool)
     case endLidSession
     case dashboard
+    case timer(minutes: Int)
+    case timerCancel
 
     /// Longest timed keep-awake a URL or the CLI may request (30 days).
     public static let maxMinutes = Int(AwakeDuration.maxSeconds / 60)
@@ -40,6 +42,11 @@ public enum URLCommand: Equatable, Sendable {
         case ("mic", "unmute"): return .micMute(false)
         case ("lid", "end"): return .endLidSession
         case ("dashboard", ""): return .dashboard
+        case ("timer", "cancel"): return .timerCancel
+        case ("timer", ""):
+            let value = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "minutes" }?.value
+            guard let m = value.flatMap({ Int($0) }), m > 0, m <= QuickTimer.maxMinutes else { return nil }
+            return .timer(minutes: m)
         default: return nil
         }
     }

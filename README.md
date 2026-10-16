@@ -160,6 +160,7 @@ open "keepwatch://awake/off"
 open "keepwatch://mic/mute"           # or mic/unmute
 open "keepwatch://lid/end"            # end a lid session (restores sleep)
 open "keepwatch://dashboard"
+open "keepwatch://timer?minutes=25"   # quick timer (or timer/cancel)
 ```
 
 Starting a lid session is deliberately **not** available by URL, so a web page can never put a password prompt in front of you. `keepwatch lid start` uses a local channel instead, and still needs your password.

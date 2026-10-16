@@ -21,10 +21,12 @@ public struct QuickTimer: Equatable, Codable, Sendable {
     public func remaining(at now: Date) -> TimeInterval { max(0, end.timeIntervalSince(now)) }
     public func isDone(at now: Date) -> Bool { now >= end }
 
-    /// Short text for the menu bar: "12m", then "45s" in the last minute.
-    public func menuBarText(at now: Date) -> String {
-        let left = remaining(at: now)
-        if left < 60 { return "\(Int(left.rounded(.up)))s" }
+    /// Short text for the menu bar: "12m", "1m" in the last minute, "1h05".
+    public func menuBarText(at now: Date) -> String { Self.menuBarText(left: remaining(at: now)) }
+
+    public static func menuBarText(left: TimeInterval) -> String {
+        guard left.isFinite, left > 0 else { return "0m" }
+        // Whole minutes only: redrawing the menu bar every second costs CPU.
         let minutes = Int((left / 60).rounded(.up))
         return minutes >= 60 ? "\(minutes / 60)h\(minutes % 60 == 0 ? "" : String(format: "%02d", minutes % 60))" : "\(minutes)m"
     }
