@@ -75,7 +75,18 @@ struct DashboardView: View {
                       subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
             SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
                       isOn: $model.notifyWhenAgentsFinish)
-            DisclosureGroup(isExpanded: $moreAwakeOptions) {
+            Button { withAnimation(.snappy(duration: 0.2)) { moreAwakeOptions.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 11, weight: .bold))
+                        .rotationEffect(.degrees(moreAwakeOptions ? 90 : 0))
+                    Text("More options: automatic, battery limits, shortcuts").font(.system(size: 12, weight: .semibold))
+                    Spacer()
+                }
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if moreAwakeOptions {
                 VStack(alignment: .leading, spacing: 10) {
                     SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
                               subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
@@ -85,9 +96,7 @@ struct DashboardView: View {
                     SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
                               subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
                 }
-                .padding(.top, 8)
-            } label: {
-                Text("More options: automatic, battery limits, shortcuts").font(.system(size: 12, weight: .semibold))
+                .transition(.opacity)
             }
             if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" && $0 != "Keepwatch" }), !others.isEmpty {
                 Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")

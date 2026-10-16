@@ -62,7 +62,7 @@ struct MenuAgents: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MenuHeading("Agent sessions", info: "AI coding agents running on this Mac, by session name when Claude Code has one, with how long each has run. Open the Dashboard to stop one.")
+            MenuHeading("Agent sessions", info: "AI coding agents running on this Mac: Claude Code, Codex, Gemini CLI, Aider, OpenCode, Goose, Amp, Cursor Agent, Qwen Code and Crush. Claude Code and Codex sessions show their name; the others show their folder. Click ⊗ twice to stop one.")
             if model.agentSessions.isEmpty {
                 Text("No agents running.").font(.caption).foregroundStyle(.secondary)
             }

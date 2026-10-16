@@ -57,6 +57,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - **Custom:** any number of minutes, hours, days or weeks (up to 30 days), or **until** a date and time.
 - **While AI agents run** keeps the Mac awake only while Claude Code, Codex, Gemini CLI, Aider, OpenCode, Goose, Amp, Cursor Agent, Qwen Code or Crush is running. After the last one exits, it waits a 2-minute grace period, then lets the Mac sleep.
   - Claude Code's idle helpers (the pre-warmed `--bg-spare` process and `claude daemon`) don't count, so they can't keep the Mac awake forever.
+- **Session names:** Claude Code and Codex sessions show the name the agent gave them (Claude Code's title, Codex's thread name); other agents show their folder. Stop any session from the menu (click ⊗ twice) or the Agents tab.
 - A notification tells you when an agent finishes, and when a session goes quiet it names it ("“Fix the checkout redirect” is waiting"). Clicking it brings forward the terminal the agent runs in.
 - **While you were away:** when you come back (screen wakes or you unlock), the menu shows what happened: agents that finished or started waiting, a lid session that ended, and the battery it cost.
 - Lid sessions show the Mac's temperature and end early if it gets hot.

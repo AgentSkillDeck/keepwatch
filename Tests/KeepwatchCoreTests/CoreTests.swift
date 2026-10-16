@@ -1047,3 +1047,33 @@ final class ScreenWatchTests: XCTestCase {
         XCTAssertEqual(ScreenWatch.watchers(processNames: ["screencapture"]), [], "your own screenshot isn't a warning")
     }
 }
+
+final class CodexTitleTests: XCTestCase {
+    func testNamesARunningCodexSessionFromItsRolloutAndIndex() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kwc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let c = Calendar(identifier: .gregorian).dateComponents(in: .current, from: now)
+        let day = root.appendingPathComponent(String(format: "sessions/%04d/%02d/%02d", c.year!, c.month!, c.day!))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let id = "01a0e184-3cef-78f2-a3d4-6950a4b03535"
+        try Data(#"{"type":"session_meta","payload":{"id":"\#(id)","cwd":"/work/app"}}"#.utf8 + Data("\n{}\n".utf8))
+            .write(to: day.appendingPathComponent("rollout-x-\(id).jsonl"))
+        try Data(#"""
+        {"id":"\#(id)","thread_name":"Old name"}
+        {"id":"\#(id)","thread_name":"Fix the login page"}
+        {"id":"other","thread_name":"Something else"}
+        """#.utf8).write(to: root.appendingPathComponent("session_index.jsonl"))
+        let running = AgentSession(pid: 7, agent: "Codex", folder: "/work/app", started: now.addingTimeInterval(-60))
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent("none-\(UUID().uuidString)")
+        XCTAssertEqual(SessionTitles.titles(for: [running], projectsDir: empty, codexDir: root, now: now), [7: "Fix the login page"])
+        let elsewhere = AgentSession(pid: 8, agent: "Codex", folder: "/work/other", started: now.addingTimeInterval(-60))
+        XCTAssertEqual(SessionTitles.titles(for: [elsewhere], projectsDir: empty, codexDir: root, now: now), [:], "no file for that folder")
+        let twin = AgentSession(pid: 9, agent: "Codex", folder: "/work/app", started: now.addingTimeInterval(-30))
+        XCTAssertEqual(SessionTitles.titles(for: [running, twin], projectsDir: empty, codexDir: root, now: now), [:],
+                       "two sessions in one folder: no guessing")
+        let resumed = AgentSession(pid: 10, agent: "Codex", folder: "/x", sessionID: id)
+        XCTAssertEqual(SessionTitles.titles(for: [resumed], projectsDir: empty, codexDir: root, now: now), [10: "Fix the login page"])
+        XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["resume", id]), id)
+    }
+}
