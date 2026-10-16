@@ -36,6 +36,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
   ```sh
   unzip keepwatch-cli-*-macos.zip
   mkdir -p ~/.local/bin && mv keepwatch-cli-*-macos/keepwatch ~/.local/bin/
+  export PATH="$HOME/.local/bin:$PATH"   # add this line to ~/.zshrc to keep it
   keepwatch version
   ```
 

@@ -20,14 +20,18 @@ If it's missing, tell the user the two ways to get it, and don't install anythin
 - The app, from https://github.com/AgentSkillDeck/keepwatch/releases/latest, then **Install the keepwatch command** in its dashboard.
 - The command alone, without the app.
 
-If the user asks you to install the command alone, use Homebrew once the tap exists, or the release zip:
+If the user asks you to install the command alone, use the release zip. This needs the GitHub CLI (`gh`); without it, ask the user to download `keepwatch-cli-VERSION-macos.zip` from the latest release page.
 
 ```sh
-brew install agentskilldeck/tap/keepwatch-cli
-# or: download keepwatch-cli-VERSION-macos.zip from the latest release, then
-unzip keepwatch-cli-*-macos.zip && mkdir -p ~/.local/bin && mv keepwatch-cli-*-macos/keepwatch ~/.local/bin/
+cd "$(mktemp -d)"
+gh release download --repo AgentSkillDeck/keepwatch --pattern 'keepwatch-cli-*-macos.zip'
+unzip keepwatch-cli-*-macos.zip
+mkdir -p ~/.local/bin && mv keepwatch-cli-*-macos/keepwatch ~/.local/bin/
+export PATH="$HOME/.local/bin:$PATH"   # tell the user to add this line to ~/.zshrc
 keepwatch version
 ```
+
+Once the Homebrew tap exists, `brew install agentskilldeck/tap/keepwatch-cli` also works. Check first with `brew info agentskilldeck/tap/keepwatch-cli`, and use the zip if that fails.
 
 Never use `sudo`. Without the app, everything works except `keepwatch lid start`, which exits with status 2 and says where to get the app.
 
