@@ -255,8 +255,46 @@ struct PrivacySwitches: View {
     var compact: Bool
 
     var body: some View {
+        if compact { compactBody } else { fullBody }
+    }
+
+    /// The menu: mic and camera side by side, alerts as a small switch.
+    private var compactBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Eyebrow(text: "Privacy")
+                Spacer()
+                Button { model.alertOnMicCamera.toggle() } label: {
+                    Label(model.alertOnMicCamera ? "Alerts on" : "Alerts off",
+                          systemImage: model.alertOnMicCamera ? "bell.fill" : "bell.slash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(model.alertOnMicCamera ? Brand.teal : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Tell me when the mic or camera turns on")
+            }
+            HStack(spacing: 8) {
+                PrivacyTile(icon: micIcon, title: "Mic", state: micShort, live: model.privacy.micInUse && model.privacy.micMuted != true,
+                            action: model.privacy.micMuted == nil ? nil : { model.setMicMuted(!(model.privacy.micMuted ?? false)) })
+                    .help(model.privacy.micMuted == true ? "Muted. Click to unmute." : "\(micStatus). Click to mute.")
+                PrivacyTile(icon: model.privacy.cameraInUse ? "video.fill" : "video.slash", title: "Camera",
+                            state: model.privacy.cameraInUse ? "Live · Turn off…" : "Off", live: model.privacy.cameraInUse,
+                            action: model.privacy.cameraInUse ? { model.open(.camera) } : nil)
+                    .help(model.privacy.cameraInUse
+                          ? "Opens the Camera list in System Settings. Switch the app off there to stop it."
+                          : "No app is using the camera")
+            }
+        }
+    }
+
+    private var micShort: String {
+        if model.privacy.micMuted == nil { return "No mic" }
+        if model.privacy.micMuted == true { return "Muted" }
+        return model.privacy.micInUse ? "Live" : "On, not in use"
+    }
+
+    private var fullBody: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if compact { Eyebrow(text: "Privacy") }
             SwitchRow(icon: micIcon, title: "Microphone", subtitle: micStatus,
                       tint: model.privacy.micInUse ? Brand.live : Brand.teal,
                       isOn: Binding(get: { model.privacy.micMuted == false },
@@ -287,10 +325,8 @@ struct PrivacySwitches: View {
             .help("macOS has no switch that turns the camera off for every app. Keepwatch shows when it's on and can alert you.")
             SwitchRow(icon: "bell.badge", title: "Alert me",
                       subtitle: "When the mic or camera turns on", isOn: $model.alertOnMicCamera)
-            if !compact {
-                SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute mic when lid closes",
-                          subtitle: "Unmutes when you open it", isOn: $model.muteMicWhenLidCloses)
-            }
+            SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute mic when lid closes",
+                      subtitle: "Unmutes when you open it", isOn: $model.muteMicWhenLidCloses)
         }
     }
 
@@ -307,6 +343,41 @@ struct PrivacySwitches: View {
             return who.isEmpty ? "In use" : "In use by " + who.joined(separator: ", ")
         }
         return "Not in use"
+    }
+}
+
+/// A mic or camera tile for the menu: red when live, click to act.
+struct PrivacyTile: View {
+    var icon: String
+    var title: String
+    var state: String
+    var live: Bool
+    var action: (() -> Void)?
+
+    var body: some View {
+        Button { action?() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(live ? Brand.live : Brand.teal)
+                    .frame(width: 26, height: 26)
+                    .background(Circle().fill((live ? Brand.live : Brand.teal).opacity(0.15)))
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(title).font(.system(size: 12, weight: .semibold))
+                    Text(state).font(.caption2.weight(.medium))
+                        .foregroundStyle(live ? Brand.live : Color.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(live ? Brand.live.opacity(0.10) : Color.primary.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(live ? Brand.live.opacity(0.5) : Color.primary.opacity(0.06)))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 }
 
@@ -359,9 +430,14 @@ struct AwakeControls: View {
             }
             if showCustom { customPanel.transition(.opacity.combined(with: .move(edge: .top))) }
             HStack(spacing: 10) {
-                IconBadge(icon: "terminal", tint: Brand.teal)
+                if compact {
+                    Image(systemName: "terminal").font(.system(size: 12, weight: .semibold)).foregroundStyle(Brand.teal)
+                        .frame(width: 20)
+                } else {
+                    IconBadge(icon: "terminal", tint: Brand.teal)
+                }
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("While AI agents run").font(.system(size: 13, weight: .medium))
+                    Text("While AI agents run").font(.system(size: compact ? 12 : 13, weight: .medium))
                     Text(agentLine).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer(minLength: 6)
@@ -386,7 +462,7 @@ struct AwakeControls: View {
                         Text(preset.label).font(.system(size: 13, weight: .semibold, design: .rounded))
                     }
                 }
-                .buttonStyle(TileButtonStyle(selected: isSelected(preset), height: 34))
+                .buttonStyle(TileButtonStyle(selected: isSelected(preset), height: 30))
                 .help(preset == .forever ? "Until you turn it off" : "Stay awake for \(preset.label)")
             }
             Menu {
@@ -401,7 +477,7 @@ struct AwakeControls: View {
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .frame(width: 44, height: 34)
+            .frame(width: 40, height: 30)
             .background(Color.primary.opacity(showCustom || isCustom ? 0.14 : 0.06),
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .help("More lengths, a custom time, or turn off")
@@ -490,8 +566,12 @@ struct LidSessionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-                HStack {
+                HStack(spacing: 4) {
                     Eyebrow(text: "Laptop closed")
+                    if !model.lidIntent.enabled {
+                        Image(systemName: "info.circle").font(.caption).foregroundStyle(.secondary)
+                            .help("Keeps working with the lid shut, then sleeps by itself after the time you pick. Asks for your password once.")
+                    }
                     Spacer()
                     if model.lidIntent.enabled, let end = model.lidIntent.expires {
                         Text("until \(end.formatted(date: .omitted, time: .shortened)) at most")
@@ -531,6 +611,31 @@ struct LidSessionCard: View {
                         Label("End lid session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent).tint(Brand.live)
+                }
+            } else if compact {
+                HStack(spacing: 6) {
+                    ForEach([1.0, 3, 6, 12], id: \.self) { h in
+                        Button { model.lidHours = h } label: {
+                            Text(Format.hours(h)).font(.system(size: 12, weight: .semibold, design: .rounded))
+                        }
+                        .buttonStyle(TileButtonStyle(selected: model.lidHours == h, height: 30))
+                        .help("Sleep after \(Format.hours(h)) with the lid closed")
+                    }
+                    Button { model.startLidSession() } label: {
+                        Label(model.lidBusy ? "…" : "Start", systemImage: "lock.open.laptopcomputer")
+                            .font(.system(size: 12, weight: .semibold))
+                            .padding(.horizontal, 10).frame(height: 30)
+                            .foregroundStyle(Color.black.opacity(0.85))
+                            .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Brand.teal.opacity(model.lidBusy || !canStart ? 0.4 : 1)))
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .disabled(model.lidBusy || !canStart)
+                    .help(model.lidBusy ? "Waiting for your password" : "Start a lid session; asks for your password once")
+                }
+                if let why = blockedReason {
+                    Label(why, systemImage: "powerplug").font(.caption).foregroundStyle(.orange)
                 }
             } else {
                 HStack(spacing: 10) {
