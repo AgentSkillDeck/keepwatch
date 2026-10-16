@@ -2,7 +2,7 @@
 name: keepwatch
 description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?", "keep it awake for 2 days", "which agents are running?", "stop that agent", "start a lid session" or "end the lid session". macOS only.
 license: Apache-2.0
-compatibility: macOS 14+. Needs the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch) with its `keepwatch` command installed (Dashboard → "Install the keepwatch command").
+compatibility: macOS 14+. Needs the `keepwatch` command, from the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch; Dashboard → "Install the keepwatch command") or installed on its own. Lid-closed sessions also need the app.
 ---
 
 # Keepwatch
@@ -15,7 +15,21 @@ compatibility: macOS 14+. Needs the Keepwatch app (https://github.com/AgentSkill
 command -v keepwatch && keepwatch version
 ```
 
-If it's missing, tell the user to install Keepwatch and click **Install the keepwatch command** in its dashboard. Never install it yourself.
+If it's missing, tell the user the two ways to get it, and don't install anything unless they ask:
+
+- The app, from https://github.com/AgentSkillDeck/keepwatch/releases/latest, then **Install the keepwatch command** in its dashboard.
+- The command alone, without the app.
+
+If the user asks you to install the command alone, use Homebrew once the tap exists, or the release zip:
+
+```sh
+brew install agentskilldeck/tap/keepwatch-cli
+# or: download keepwatch-cli-VERSION-macos.zip from the latest release, then
+unzip keepwatch-cli-*-macos.zip && mkdir -p ~/.local/bin && mv keepwatch-cli-*-macos/keepwatch ~/.local/bin/
+keepwatch version
+```
+
+Never use `sudo`. Without the app, everything works except `keepwatch lid start`, which exits with status 2 and says where to get the app.
 
 ## Keep the Mac awake for one long command (preferred)
 

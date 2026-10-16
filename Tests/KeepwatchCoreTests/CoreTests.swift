@@ -338,6 +338,14 @@ final class ListeningPortsTests: XCTestCase {
 final class CLICommandTests: XCTestCase {
     func p(_ s: String) throws -> CLICommand { try CLICommand.parse(s.split(separator: " ").map(String.init)) }
 
+    func testLidStartWithoutAppSaysWhereToGetIt() {
+        let missing = CLICommand.lidNeedsAppMessage(appInstalled: false)
+        XCTAssertTrue(missing.contains("https://github.com/AgentSkillDeck/keepwatch/releases/latest"), missing)
+        XCTAssertTrue(missing.contains("Keepwatch app"), missing)
+        let closed = CLICommand.lidNeedsAppMessage(appInstalled: true)
+        XCTAssertTrue(closed.contains("Open Keepwatch"), closed)
+    }
+
     func testParsesCommands() throws {
         XCTAssertEqual(try CLICommand.parse([]), .help)
         XCTAssertEqual(try p("status --json"), .status(json: true))

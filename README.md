@@ -25,6 +25,24 @@ https://github.com/user-attachments/assets/15249e04-ae40-4b3f-8cc4-2ddb3411619d
 
 Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon and Intel, is signed with a Developer ID, and is not sandboxed.
 
+## Install
+
+**The app:** download `Keepwatch-VERSION.dmg` from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest) and drag Keepwatch to Applications. Its dashboard installs the `keepwatch` command (**Install the keepwatch command**).
+
+**Command line only:** you can install the `keepwatch` command without the app.
+
+- Zip: download `keepwatch-cli-VERSION-macos.zip` from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest), unzip it, and put `keepwatch` on your `PATH`:
+
+  ```sh
+  unzip keepwatch-cli-*-macos.zip
+  mkdir -p ~/.local/bin && mv keepwatch-cli-*-macos/keepwatch ~/.local/bin/
+  keepwatch version
+  ```
+
+- Homebrew (coming soon): `brew install agentskilldeck/tap/keepwatch-cli`.
+
+Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themselves. Lid-closed sessions (`keepwatch lid start`) need the app, because it shows the password prompt and runs the watchdog.
+
 ## What it does
 
 **Stay awake**
@@ -93,7 +111,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 
 **Command line, for you and your AI agents**
 
-Install it from the dashboard (**Install the keepwatch command**), then:
+Install it from the dashboard (**Install the keepwatch command**) or on its own (see [Install](#install)), then:
 
 ```sh
 keepwatch run -- npm test          # stay awake exactly while a command runs (exit status passes through)
@@ -136,13 +154,14 @@ Starting a lid session is deliberately **not** available by URL, so a web page c
 ## Build, sign, notarize
 
 ```sh
-swift test                      # 65 unit, shell-watchdog and live read-only tests
+swift test                      # 83 unit, shell-watchdog and live read-only tests
 scripts/build-app.sh            # dist/Keepwatch.app (universal)
 scripts/sign.sh                 # Developer ID + hardened runtime + timestamp
 # one-time: store notarization credentials in your keychain
 xcrun notarytool store-credentials keepwatch-notary --apple-id YOU@EXAMPLE.COM --team-id S99G3X6RPM
 scripts/notarize.sh [profile]   # notarize, staple, zip -> dist/Keepwatch-VERSION.zip
 scripts/make-dmg.sh [profile]   # signed, notarized, stapled dist/Keepwatch-VERSION.dmg
+scripts/make-cli-zip.sh         # unsigned dist/keepwatch-cli-VERSION-macos.zip (universal); prints the signing steps
 (cd dist && shasum -a 256 Keepwatch-*.zip Keepwatch-*.dmg > SHA256SUMS.txt)
 ```
 
@@ -155,6 +174,7 @@ To review the UI without a screen capture: `dist/Keepwatch.app/Contents/MacOS/Ke
 - `Tests/KeepwatchCoreTests`: includes a test that runs the real watchdog shell loop against stub `pmset` and `ioreg` binaries.
 - `Sources/KeepwatchCLI`: the `keepwatch` command.
 - `skills/keepwatch`: the agent skill.
+- `packaging/homebrew`: the Homebrew formula for the CLI alone.
 - `docs/`: the design doc and research notes.
 - `AGENTS.md`: strict rules for agents developing Keepwatch.
 

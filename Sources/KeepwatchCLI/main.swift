@@ -167,7 +167,10 @@ func run(_ command: CLICommand) -> Int32 {
         }
         return 0
     case .lidStart(let hours):
-        guard appRunning() else { err("open the Keepwatch app first; it shows the password prompt"); return 2 }
+        guard appRunning() else {
+            let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) != nil
+            err(CLICommand.lidNeedsAppMessage(appInstalled: installed)); return 2
+        }
         var info: [String: Any] = [:]
         if let hours { info["hours"] = hours }
         DistributedNotificationCenter.default().postNotificationName(

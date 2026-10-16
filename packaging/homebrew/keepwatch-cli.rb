@@ -1,0 +1,30 @@
+# Homebrew formula for the keepwatch command on its own, without the app.
+# It lives in the tap repo AgentSkillDeck/homebrew-tap as Formula/keepwatch-cli.rb.
+# See packaging/homebrew/README.md for how to publish a new version.
+class KeepwatchCli < Formula
+  desc "Keep your Mac awake for AI agents, and check mic, camera and power"
+  homepage "https://github.com/AgentSkillDeck/keepwatch"
+  version "0.2.0"
+  url "https://github.com/AgentSkillDeck/keepwatch/releases/download/v#{version}/keepwatch-cli-#{version}-macos.zip"
+  # FILL IN AT RELEASE TIME: shasum -a 256 dist/keepwatch-cli-<version>-macos.zip
+  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  license "Apache-2.0"
+
+  depends_on macos: :sonoma
+
+  def install
+    bin.install "keepwatch"
+  end
+
+  def caveats
+    <<~EOS
+      Lid-closed sessions (keepwatch lid start) need the Keepwatch app:
+        https://github.com/AgentSkillDeck/keepwatch/releases/latest
+      Everything else works without it.
+    EOS
+  end
+
+  test do
+    assert_match "keepwatch #{version}", shell_output("#{bin}/keepwatch version")
+  end
+end
