@@ -1,6 +1,6 @@
 import Foundation
 
-/// The opt-in update check: Keepwatch's only network request (issue #4).
+/// The opt-in update check: Keepwatch's only network request.
 /// One GET to GitHub's "latest release" API; it never downloads or installs.
 public enum UpdateCheck {
     public static let latestReleaseURL = URL(string: "https://api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest")

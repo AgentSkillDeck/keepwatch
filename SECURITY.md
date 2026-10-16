@@ -21,8 +21,8 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 
 - capture audio or video (it only asks the system whether the mic or camera is running);
 - read or write the TCC privacy database, or ask for Full Disk Access;
-- ask for Accessibility, unless you turn on **Stay active** ([#5](https://github.com/AgentSkillDeck/keepwatch/issues/5)). Then it uses it for one thing only: when you've been idle for the minutes you chose, it posts a 1-pixel mouse move and moves the pointer back. It never clicks, types or reads the screen, and never does it during a lid session;
-- make network requests, except the opt-in update check: with **Check for updates** (or the daily switch, off by default) it sends one GET to `api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest` with no cookies, reads the version number and release page, and never downloads or installs anything ([#4](https://github.com/AgentSkillDeck/keepwatch/issues/4));
+- ask for Accessibility, unless you turn on **Stay active**. Then it uses it for one thing only: when you've been idle for the minutes you chose, it posts a 1-pixel mouse move and moves the pointer back. It never clicks, types or reads the screen, and never does it during a lid session;
+- make network requests, except the opt-in update check: with **Check for updates** (or the daily switch, off by default) it sends one GET to `api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest` with no cookies, reads the version number and release page, and never downloads or installs anything;
 - stop macOS's own processes. In the app, Stop always asks first. `keepwatch agents stop PID` stops only a process that is an agent session (Claude Code, Codex…) of your own user, and re-checks that just before signalling it.
 
 ## Other things it changes, only when you ask

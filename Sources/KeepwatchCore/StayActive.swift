@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import IOKit
 
-/// "Stay active" (issue #5): chat and meeting apps mark you away after a few
+/// "Stay active": chat and meeting apps mark you away after a few
 /// minutes without input, whatever keeps the Mac awake. When you have been
 /// idle for `idleMinutes`, Keepwatch moves the pointer one pixel and back. It
 /// never clicks or types, needs Accessibility, and is off unless you turn it on.

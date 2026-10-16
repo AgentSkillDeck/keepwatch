@@ -865,7 +865,7 @@ struct AwakeModesExplainer: View {
     }
 }
 
-/// Keeps chat and meeting apps from marking you away (issue #5).
+/// Keeps chat and meeting apps from marking you away.
 struct StayActiveRow: View {
     @EnvironmentObject var model: AppModel
 

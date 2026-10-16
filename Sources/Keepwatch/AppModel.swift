@@ -75,7 +75,7 @@ final class AppModel: ObservableObject {
     @Published var menuPresets: [AwakePreset] {
         didSet { defaults.set(menuPresets.map(\.rawValue), forKey: "menuPresets") }
     }
-    /// Opt-in: nudge the pointer when idle so chat apps keep you active (issue #5).
+    /// Opt-in: nudge the pointer when idle so chat apps keep you active.
     @Published var stayActive: Bool {
         didSet {
             defaults.set(stayActive, forKey: "stayActive")
@@ -85,7 +85,7 @@ final class AppModel: ObservableObject {
     @Published var stayActiveMinutes: Int { didSet { defaults.set(stayActiveMinutes, forKey: "stayActiveMinutes") } }
     @Published private(set) var accessibilityTrusted = AXIsProcessTrusted()
     private var nudgedThisIdle = false
-    /// Opt-in: check GitHub for a newer version once a day (issue #4).
+    /// Opt-in: check GitHub for a newer version once a day.
     @Published var autoCheckUpdates: Bool { didSet { defaults.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
     @Published private(set) var availableUpdate: UpdateCheck.Release?
     @Published private(set) var updateStatus: String?
