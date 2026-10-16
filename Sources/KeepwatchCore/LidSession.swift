@@ -84,9 +84,13 @@ public enum LidWatchdog {
         var pmset = "/usr/bin/pmset"
         var ioreg = "/usr/sbin/ioreg"
         var launchctl = "/bin/launchctl"
-        var logger = "/usr/bin/logger"
+        /// Root-owned folder, so nobody can plant a symlink there.
+        var logFile = "/var/log/keepwatch-lid.log"
         var label = LidWatchdog.label
+        /// Battery and lid checks run this often (seconds).
         var interval = 30
+        /// The stop file is checked this often, so End takes seconds, not half a minute.
+        var poll = 2
         /// Floor for the lid-closed limit; tests lower it to run in seconds.
         var minLidSeconds = 60
         static let system = Tools()
@@ -112,16 +116,20 @@ public enum LidWatchdog {
         // a background child instead, it kept osascript waiting for the whole
         // session and died with it.) launchd restarts a submitted job that
         // exits, so the loop ends by removing its own job, and a restarted
-        // copy exits at once if sleep is already back on. Why it stopped goes
-        // to the system log (tag keepwatch-lid), never to a file in the
-        // user's folders, which root must not write to.
+        // copy exits at once if sleep is already back on. Why it stopped is
+        // appended to /var/log/keepwatch-lid.log (root-owned, so nobody can
+        // plant a symlink there); root never writes in the user's folders.
+        // The stop file is checked every `poll` seconds, the rest every
+        // `interval` seconds.
         let loop = """
         S='\(stopFile)'; \
         \(tools.pmset) -g | /usr/bin/grep -Eq 'SleepDisabled[[:space:]]+1' || { \(lc) remove \(label); exit 0; }; \
         END=$(( $(/bin/date +%s) + \(deadline) )); LIDMAX=\(lidLimit); CLOSED=0; R=deadline; \
-        \(tools.logger) -t keepwatch-lid started; \
+        LOG='\(tools.logFile)'; T=0; \
+        echo "$(/bin/date) started" >> "$LOG"; \
         while :; do \
         NOW=$(/bin/date +%s); [ "$NOW" -ge "$END" ] && break; [ -e "$S" ] && { R=stop-requested; break; }; \
+        if [ "$T" -le 0 ]; then T=\(tools.interval); \
         B=$(\(tools.pmset) -g batt); \
         if echo "$B" | /usr/bin/grep -q "Battery Power"; then \
         [ \(allowBattery) -eq 0 ] && { R=on-battery; break; }; \
@@ -131,8 +139,8 @@ public enum LidWatchdog {
         if \(tools.ioreg) -r -k AppleClamshellState -d 1 | /usr/bin/grep -q '"AppleClamshellState" = Yes'; \
         then CLOSED=$((CLOSED + \(tools.interval))); else CLOSED=0; fi; \
         [ "$CLOSED" -ge "$LIDMAX" ] && { R=lid-closed-limit; break; }; fi; \
-        /bin/sleep \(tools.interval); done; \
-        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; \(tools.logger) -t keepwatch-lid "ended: $R"; \
+        fi; /bin/sleep \(tools.poll); T=$((T - \(tools.poll))); done; \
+        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; echo "$(/bin/date) ended: $R" >> "$LOG"; \
         if [ \(sleepAfter) -eq 1 ] && \(tools.ioreg) -r -k AppleClamshellState -d 1 | /usr/bin/grep -q '"AppleClamshellState" = Yes'; \
         then \(tools.pmset) sleepnow; fi; \
         \(lc) remove \(label)

@@ -1,3 +1,4 @@
+import Charts
 import KeepwatchCore
 import SwiftUI
 
@@ -66,7 +67,8 @@ struct DashboardView: View {
     @AppStorage("moreAwakeOptions") private var moreAwakeOptions = false
 
     private var lidOpenCard: some View {
-        Card("Laptop open", icon: "eye.fill") {
+        Card("Laptop open", icon: "eye.fill",
+             subtitle: "Your Mac won't sleep while you're away. Closing the lid still sleeps it. No password.") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
@@ -125,7 +127,10 @@ struct DashboardView: View {
                                            set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }),
                         options: ["Laptop open", "Laptop closed"])
                 if tab == .lid || awakeSub == "Laptop closed" {
-                    Card("Laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
+                    Card("Laptop closed", icon: "laptopcomputer.slash",
+                         subtitle: "Keeps working with the lid shut, then sleeps by itself. Asks for your password to start.") {
+                        LidSessionCard(compact: false)
+                    }
                 } else {
                     lidOpenCard
                 }
@@ -321,7 +326,7 @@ struct SummaryHeader: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10),
                                      count: min(SummaryTile.perRow, max(1, model.summaryTiles.count))),
                       spacing: 10) {
-                ForEach(model.summaryTiles) { tileView($0).frame(height: 96) }
+                ForEach(model.summaryTiles) { tileView($0).frame(height: 76) }
             }
         }
         .padding(18)
@@ -331,28 +336,46 @@ struct SummaryHeader: View {
         .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Brand.teal.opacity(0.25)))
     }
 
+    /// Which tab a tile opens when clicked.
+    private func destination(_ tile: SummaryTile) -> DashboardTab {
+        switch tile {
+        case .battery, .health, .thermal, .cycles, .timeLeft: .power
+        case .agents: .agents
+        case .mic, .camera: .privacy
+        case .cpu, .memory, .ports: .ports
+        case .security: .security
+        }
+    }
+
     @ViewBuilder private func tileView(_ tile: SummaryTile) -> some View {
+        Button {
+            if tile == .ports { UserDefaults.standard.set("Ports", forKey: "appsSub") }
+            if tile == .memory || tile == .cpu { UserDefaults.standard.set("Memory", forKey: "appsSub") }
+            withAnimation(.snappy(duration: 0.2)) { tab = destination(tile) }
+        } label: { tileContent(tile).contentShape(Rectangle()) }
+        .buttonStyle(.plain)
+        .help("Open \(destination(tile).title)")
+    }
+
+    @ViewBuilder private func tileContent(_ tile: SummaryTile) -> some View {
         let p = model.power
         switch tile {
         case .battery:
-            StatTile(value: p?.batteryPercent.map { "\($0)%" } ?? "–",
+            let pct = p?.batteryPercent
+            let low = (pct ?? 100) <= 20 && p?.onBattery == true
+            StatTile(value: pct.map { "\($0)%" } ?? "–",
                      caption: p.map { $0.charging ? "Charging" : ($0.onBattery ? "On battery" : "Plugged in") } ?? "Battery",
-                     icon: p?.onBattery == false ? "powerplug.fill" : "battery.75percent")
+                     icon: p?.onBattery == false ? "powerplug.fill" : "battery.75percent",
+                     tint: low ? .orange : Brand.teal, fraction: pct.map { Double($0) / 100 })
         case .health:
-            StatTile(value: p?.healthPercent.map { "\($0)%" } ?? "–", caption: "Battery health", icon: "heart.fill")
+            let h = p?.healthPercent
+            StatTile(value: h.map { "\($0)%" } ?? "–", caption: "Health", icon: "battery.100percent",
+                     tint: (h ?? 100) < 80 ? .orange : Brand.teal, fraction: h.map { Double($0) / 100 })
         case .agents:
             let n = model.agents.sessionCount
-            Button { tab = .agents } label: {
-                StatTile(value: String(n), caption: n == 1 ? "Agent session" : "Agent sessions") {
-                    if model.agents.isEmpty { TileSymbol(name: "terminal.fill", tint: Brand.teal) }
-                    else { AgentBadges(agents: model.agents, size: 18) }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("See and stop agent sessions")
+            StatTile(value: n == 0 ? "None" : "\(n) running", caption: "Agents", icon: "terminal.fill")
         case .mic:
-            let live = model.privacy.micInUse
+            let live = model.privacy.micInUse && model.privacy.micMuted != true
             StatTile(value: model.privacy.micMuted == true ? "Muted" : (live ? "Live" : "Idle"),
                      caption: "Microphone", icon: live ? "mic.fill" : (model.privacy.micMuted == true ? "mic.slash.fill" : "mic"),
                      tint: live ? Brand.live : Brand.teal)
@@ -361,27 +384,29 @@ struct SummaryHeader: View {
             StatTile(value: live ? "Live" : "Off", caption: "Camera", icon: live ? "video.fill" : "video.slash",
                      tint: live ? Brand.live : Brand.teal)
         case .cpu:
-            let busy = (model.load.cpuPercent ?? 0) >= 85
-            StatTile(value: model.load.cpuPercent.map { "\($0)%" } ?? "–", caption: "CPU", icon: "cpu",
-                     tint: busy ? .orange : Brand.teal)
+            let cpu = model.load.cpuPercent
+            StatTile(value: cpu.map { "\($0)%" } ?? "–", caption: "CPU", icon: "cpu",
+                     tint: (cpu ?? 0) >= 85 ? .orange : Brand.teal, fraction: cpu.map { Double($0) / 100 })
         case .memory:
-            let full = (model.load.memoryPercent ?? 0) >= 90
-            StatTile(value: model.load.memoryPercent.map { "\($0)%" } ?? "–", caption: "Memory", icon: "memorychip",
-                     tint: full ? .orange : Brand.teal)
+            let mem = model.load.memoryPercent
+            StatTile(value: mem.map { "\($0)%" } ?? "–", caption: "Memory", icon: "memorychip",
+                     tint: (mem ?? 0) >= 90 ? .orange : Brand.teal, fraction: mem.map { Double($0) / 100 })
         case .thermal:
             let hot = p.map { $0.thermal == .serious || $0.thermal == .critical } ?? false
             StatTile(value: p.map { PowerFacts.thermalName($0.thermal) } ?? "–", caption: "Temperature",
                      icon: "thermometer.medium", tint: hot ? .orange : Brand.teal)
         case .cycles:
-            StatTile(value: p?.cycleCount.map(String.init) ?? "–", caption: "Charge cycles", icon: "arrow.triangle.2.circlepath")
+            StatTile(value: p?.cycleCount.map(String.init) ?? "–", caption: "Cycles", icon: "arrow.triangle.2.circlepath")
         case .timeLeft:
-            StatTile(value: p?.minutesRemaining.map { Format.duration(TimeInterval($0 * 60)) } ?? "–",
-                     caption: "Battery time left", icon: "hourglass")
+            StatTile(value: p?.minutesRemaining.map { Format.duration(TimeInterval($0 * 60)) }
+                         ?? (p?.onBattery == false ? "Plugged in" : "Working it out"),
+                     caption: "Time left", icon: "hourglass")
         case .ports:
-            StatTile(value: String(model.ports.count), caption: "Listening ports", icon: "network")
+            StatTile(value: String(model.ports.count), caption: "Ports", icon: "network")
         case .security:
             let weak = model.security.values.filter { if case .weak = $0 { true } else { false } }.count
-            StatTile(value: weak == 0 ? "OK" : "\(weak) to check", caption: "Security", icon: "checkmark.shield.fill",
+            StatTile(value: weak == 0 ? "All good" : "\(weak) to check", caption: "Security",
+                     icon: weak == 0 ? "checkmark.shield.fill" : "exclamationmark.shield.fill",
                      tint: weak == 0 ? Brand.teal : .orange)
         }
     }
@@ -508,17 +533,19 @@ struct PowerFacts: View {
 struct Card<Content: View>: View {
     var title: String
     var icon: String
+    var subtitle: String?
     @ViewBuilder var content: Content
 
-    init(_ title: String, icon: String, @ViewBuilder content: () -> Content) {
+    init(_ title: String, icon: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
         self.icon = icon
+        self.subtitle = subtitle
         self.content = content()
     }
 
     var body: some View {
         Panel(padding: 16) {
-            SectionHeader(icon: icon, title: title)
+            SectionHeader(icon: icon, title: title, subtitle: subtitle)
             content
         }
     }
@@ -803,32 +830,87 @@ struct AppIcon: View {
 struct BatteryHistoryView: View {
     @EnvironmentObject var model: AppModel
 
+    private struct Point: Identifiable {
+        var date: Date
+        var health: Int
+        var id: Date { date }
+    }
+
     var body: some View {
         let r = model.batteryHistory.readings
-        VStack(alignment: .leading, spacing: 8) {
-            if r.count < 2 {
-                Text("Keepwatch saves one reading a day. Check back in a few days.").font(.callout).foregroundStyle(.secondary)
-            } else {
-                GeometryReader { g in
-                    let values = r.map { Double($0.healthPercent) }
-                    let lo = (values.min() ?? 0) - 1, hi = (values.max() ?? 100) + 1
-                    Path { p in
-                        for (i, v) in values.enumerated() {
-                            let x = g.size.width * CGFloat(i) / CGFloat(max(1, values.count - 1))
-                            let y = g.size.height * CGFloat(1 - (v - lo) / max(0.001, hi - lo))
-                            i == 0 ? p.move(to: CGPoint(x: x, y: y)) : p.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    }
-                    .stroke(Brand.teal, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                }
-                .frame(height: 70)
+        let f = DateFormatter.yyyyMMdd
+        let points = r.compactMap { reading in f.date(from: reading.day).map { Point(date: $0, health: reading.healthPercent) } }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                fact(r.last.map { "\($0.healthPercent)%" } ?? "–", "Health now")
+                fact(model.batteryHistory.change.map { "\($0 >= 0 ? "+" : "")\($0) pts" } ?? "–",
+                     r.first.map { "Since \(Self.short($0.day))" } ?? "Change")
+                fact(model.power?.cycleCount.map(String.init) ?? "–", "Charge cycles")
+                fact("80%", "Worn below")
             }
-            if let first = r.first, let last = r.last {
-                Text("\(last.healthPercent)% now" + (model.batteryHistory.change.map { ", \($0 >= 0 ? "+" : "")\($0) points since \(first.day)" } ?? ""))
-                    .font(.caption).foregroundStyle(.secondary)
+            if points.count < 2 {
+                Label("Keepwatch saves one reading a day, so the chart fills in over the next few days.", systemImage: "calendar")
+                    .font(.callout).foregroundStyle(.secondary)
+            } else {
+                let lowest = min(points.map(\.health).min() ?? 80, 80)
+                Chart {
+                    RuleMark(y: .value("Worn", 80))
+                        .foregroundStyle(Color.orange.opacity(0.6))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .annotation(position: .top, alignment: .leading) {
+                            Text("80%: Apple calls it worn").font(.caption2).foregroundStyle(.orange)
+                        }
+                    ForEach(points) { pt in
+                        AreaMark(x: .value("Day", pt.date), yStart: .value("Base", lowest - 2), yEnd: .value("Health", pt.health))
+                            .foregroundStyle(LinearGradient(colors: [Brand.teal.opacity(0.35), Brand.teal.opacity(0.02)],
+                                                            startPoint: .top, endPoint: .bottom))
+                            .interpolationMethod(.monotone)
+                        LineMark(x: .value("Day", pt.date), y: .value("Health", pt.health))
+                            .foregroundStyle(Brand.teal)
+                            .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                            .interpolationMethod(.monotone)
+                        PointMark(x: .value("Day", pt.date), y: .value("Health", pt.health))
+                            .foregroundStyle(Brand.teal).symbolSize(points.count > 20 ? 0 : 28)
+                    }
+                }
+                .chartYScale(domain: (lowest - 2)...100)
+                .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { v in
+                    AxisGridLine().foregroundStyle(Color.primary.opacity(0.08))
+                    AxisValueLabel { if let n = v.as(Int.self) { Text("\(n)%") } }
+                } }
+                .chartXAxis { AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                    AxisGridLine().foregroundStyle(Color.primary.opacity(0.05))
+                    AxisValueLabel(format: .dateTime.month(.abbreviated).day())
+                } }
+                .frame(height: 150)
             }
         }
     }
+
+    private func fact(_ value: String, _ caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.system(size: 17, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private static func short(_ day: String) -> String {
+        guard let d = DateFormatter.yyyyMMdd.date(from: day) else { return day }
+        return d.formatted(.dateTime.month(.abbreviated).day())
+    }
+}
+
+extension DateFormatter {
+    static let yyyyMMdd: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 }
 
 /// Which keep-awake lengths get a button in the menu.

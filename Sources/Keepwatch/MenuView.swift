@@ -700,15 +700,6 @@ struct LidSessionCard: View {
                     Label(why, systemImage: "powerplug").font(.caption).foregroundStyle(.orange)
                 }
             } else {
-                HStack(spacing: 10) {
-                    IconBadge(icon: "laptopcomputer", tint: Brand.teal)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Keep working with the lid shut").font(.system(size: 13, weight: .medium))
-                        Text("Then the Mac sleeps by itself. Needs your password once.")
-                            .font(.caption).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
                 HStack(spacing: 6) {
                     Text("Sleep after").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     ForEach([1.0, 3, 6, 12], id: \.self) { h in

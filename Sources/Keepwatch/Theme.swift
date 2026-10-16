@@ -45,7 +45,10 @@ struct SectionHeader: View {
             HStack(spacing: 7) {
                 Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
                 Text(title).font(.system(size: 15, weight: .bold, design: .rounded))
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+            }
+            if let subtitle {
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
         }
@@ -206,32 +209,50 @@ struct StatusOrb: View {
 
 /// A big value with a caption, for the dashboard summary. Every tile uses
 /// the same three rows (icon, value, caption) so tiles line up across a row.
+/// A summary tile: icon and label on top, the value below, and for
+/// percentages a thin bar. Warnings tint the value and the bar.
 struct StatTile<Icon: View>: View {
     var value: String
     var caption: String
     var tint: Color = Brand.teal
+    /// 0...1 draws a bar under the value.
+    var fraction: Double?
     @ViewBuilder var icon: Icon
+    @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            icon.frame(height: 24, alignment: .leading)
-            Spacer(minLength: 6)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                icon.frame(height: 18, alignment: .leading)
+                Text(caption).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
             Text(value)
-                .font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
+                .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(tint == Brand.teal ? Color.primary : tint)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
-                .padding(.top, 2)
+            if let fraction {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(tint).frame(width: geo.size.width * min(max(fraction, 0), 1))
+                    }
+                }
+                .frame(height: 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(12)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(10)
+        .background(Color.primary.opacity(hovering ? 0.09 : 0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { hovering = $0 }
     }
 }
 
 extension StatTile where Icon == TileSymbol {
-    init(value: String, caption: String, icon: String, tint: Color = Brand.teal) {
-        self.init(value: value, caption: caption, tint: tint) { TileSymbol(name: icon, tint: tint) }
+    init(value: String, caption: String, icon: String, tint: Color = Brand.teal, fraction: Double? = nil) {
+        self.init(value: value, caption: caption, tint: tint, fraction: fraction) { TileSymbol(name: icon, tint: tint) }
     }
 }
 
@@ -239,7 +260,7 @@ struct TileSymbol: View {
     var name: String
     var tint: Color
     var body: some View {
-        Image(systemName: name).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
+        Image(systemName: name).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
     }
 }
 

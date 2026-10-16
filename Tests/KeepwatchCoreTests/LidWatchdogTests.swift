@@ -24,7 +24,6 @@ final class LidWatchdogTests: XCTestCase {
         else echo "$*" >> \(log.path); \
         [ "$2" = "disablesleep" ] && echo "$3" > \(dir.path)/disabled; fi
         """)
-        try stub("logger", #"shift 2; echo "$*" >> \#(dir.path)/syslog"#)
         try stub("ioreg", #"echo "  | \"AppleClamshellState\" = $(cat \#(dir.path)/lid)""#)
     }
 
@@ -56,7 +55,7 @@ final class LidWatchdogTests: XCTestCase {
     var tools: LidWatchdog.Tools {
         LidWatchdog.Tools(pmset: dir.appendingPathComponent("pmset").path,
                           ioreg: dir.appendingPathComponent("ioreg").path,
-                          logger: dir.appendingPathComponent("logger").path, label: label, interval: 1, minLidSeconds: 1)
+                          logFile: dir.appendingPathComponent("watchdog.log").path, label: label, interval: 1, poll: 1, minLidSeconds: 1)
     }
 
     func start(_ plan: LidSessionPlan) throws {
@@ -145,8 +144,8 @@ final class LidWatchdogTests: XCTestCase {
         try "x".write(to: stop, atomically: true, encoding: .utf8)
         XCTAssertEqual(calls(waitingFor: "sleepnow"), ["-a disablesleep 1", "-a disablesleep 0", "sleepnow"])
         usleep(300_000)
-        let log = (try? String(contentsOf: dir.appendingPathComponent("syslog"), encoding: .utf8)) ?? ""
-        XCTAssertEqual(log, "started\nended: stop-requested\n")
+        let log = (try? String(contentsOf: dir.appendingPathComponent("watchdog.log"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(log.contains(" started\n") && log.hasSuffix(" ended: stop-requested\n"), log)
         XCTAssertFalse(FileManager.default.fileExists(atPath: stop.path + ".log"), "root writes nothing in the user's folders")
     }
 
@@ -169,6 +168,20 @@ final class LidWatchdogTests: XCTestCase {
         repeat { usleep(300_000) } while jobLoaded && Date() < end
         XCTAssertFalse(jobLoaded)
         XCTAssertEqual(calls(waitingFor: "never", timeout: 0.1), [], "never touched sleep")
+    }
+
+    /// End must take seconds even though battery and lid checks run every
+    /// 30 s; a slow End made people reach for the password fallback.
+    func testStopIsSeenWithinAPollNotAnInterval() throws {
+        var slow = tools
+        slow.interval = 30
+        let cmd = try LidWatchdog.startCommand(plan: LidSessionPlan(afterLidClosed: nil), stopFile: stop.path, now: Date(), tools: slow)
+        XCTAssertEqual(run("/bin/sh", ["-c", cmd]), 0)
+        usleep(1_500_000)
+        try "x".write(to: stop, atomically: true, encoding: .utf8)
+        let asked = Date()
+        XCTAssertEqual(calls(waitingFor: "sleepnow", timeout: 6), ["-a disablesleep 1", "-a disablesleep 0", "sleepnow"])
+        XCTAssertLessThan(Date().timeIntervalSince(asked), 4)
     }
 
     func testStopNowAlsoRemovesTheJob() {
@@ -195,7 +208,9 @@ final class LidWatchdogTests: XCTestCase {
         XCTAssertTrue(cmd.contains("/usr/bin/pmset -a disablesleep 1 >/dev/null 2>&1 || exit 1; " +
                                    "/bin/launchctl submit -l \(LidWatchdog.label) -- /bin/sh -c"))
         XCTAssertTrue(cmd.contains("/usr/sbin/ioreg -r -k AppleClamshellState"))
-        XCTAssertTrue(cmd.contains("/bin/sleep 30; done"))
+        XCTAssertTrue(cmd.contains("then T=30;"), "battery and lid every 30 s")
+        XCTAssertTrue(cmd.contains("/bin/sleep 2; T=$((T - 2)); done"), "stop file every 2 s")
+        XCTAssertTrue(cmd.contains("/var/log/keepwatch-lid.log"), "log only in a root-owned folder")
     }
 
     func testNextTime() {

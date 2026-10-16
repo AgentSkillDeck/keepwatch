@@ -11,7 +11,7 @@ Include what you found, how to reproduce it, and the impact you expect. We will 
 Only one thing, and only after you enter your password in the macOS prompt. The prompt appears when you click **Start lid session**, or when `keepwatch lid start` (run by you or an agent) asks the running app over a local distributed notification:
 
 - `pmset -a disablesleep 1`, and
-- a `/bin/sh` watchdog loop, built in `Sources/KeepwatchCore/LidSession.swift` and submitted as the launchd job `app.keepwatch.lid-watchdog`, that turns sleep back on (`pmset -a disablesleep 0`) and, if the lid is shut, `pmset sleepnow`, then removes its own job. It logs why it stopped to the system log (tag `keepwatch-lid`) and writes no files.
+- a `/bin/sh` watchdog loop, built in `Sources/KeepwatchCore/LidSession.swift` and submitted as the launchd job `app.keepwatch.lid-watchdog`, that turns sleep back on (`pmset -a disablesleep 0`) and, if the lid is shut, `pmset sleepnow`, then removes its own job. It checks the stop file every 2 s (battery and lid every 30 s) and appends when it started and why it stopped to `/var/log/keepwatch-lid.log`, a root-owned folder; it writes nothing in your folders.
 
 Every value interpolated into that command is a number or a vetted path: absolute, with no quote, backslash or newline. No user text reaches the root shell. Starting a lid session is not reachable from `keepwatch://` URLs.
 
