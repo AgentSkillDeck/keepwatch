@@ -1094,3 +1094,36 @@ final class MultiDeviceMuteTests: XCTestCase {
         XCTAssertFalse(s.liveMics.contains(""))
     }
 }
+
+final class InterpretedAgentTests: XCTestCase {
+    let m = AgentMatcher()
+    func agent(_ name: String, _ args: [String]) -> String? { m.agentName(for: RunningProcess(pid: 5, name: name, arguments: args)) }
+
+    func testAgentsRunThroughNodeOrPython() {
+        XCTAssertEqual(agent("node", ["/opt/homebrew/bin/gemini"]), "Gemini CLI")
+        XCTAssertEqual(agent("node", ["--no-warnings", "/usr/local/lib/node_modules/@google/gemini-cli/dist/index.js"]), "Gemini CLI")
+        XCTAssertEqual(agent("node", ["/Users/me/.npm-global/lib/node_modules/@qwen-code/qwen-code/cli.js"]), "Qwen Code")
+        XCTAssertEqual(agent("node", ["/opt/homebrew/lib/node_modules/@sourcegraph/amp/dist/main.js"]), "Amp")
+        XCTAssertEqual(agent("node", ["/Users/me/.local/bin/cursor-agent"]), "Cursor Agent")
+        XCTAssertEqual(agent("node", ["/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"]), "Claude Code")
+        XCTAssertEqual(agent("python3", ["/Users/me/.local/bin/aider", "--model", "x"]), "Aider")
+        XCTAssertEqual(agent("Python", ["-m", "aider"]), "Aider")
+        XCTAssertEqual(agent("bun", ["/Users/me/.bun/bin/opencode"]), "OpenCode")
+    }
+
+    func testOtherScriptsAreNotAgents() {
+        XCTAssertNil(agent("node", ["server.js", "--name", "gemini"]), "only the script decides, not its arguments")
+        XCTAssertNil(agent("node", ["/app/node_modules/.bin/vite"]))
+        XCTAssertNil(agent("python3", ["-m", "http.server"]))
+        XCTAssertNil(agent("node", []))
+        XCTAssertNil(agent("Cursor", []), "the Cursor editor itself is an app, not an agent session")
+        XCTAssertNil(agent("node", ["/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js", "--bg-spare"]),
+                     "idle helpers stay ignored when run through node")
+    }
+
+    func testCandidateIncludesRuntimes() {
+        XCTAssertTrue(m.isCandidate("node"))
+        XCTAssertTrue(m.isCandidate("claude"))
+        XCTAssertFalse(m.isCandidate("Finder"))
+    }
+}
