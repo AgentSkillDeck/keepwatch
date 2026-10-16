@@ -20,7 +20,7 @@ Read `README.md`, `docs/design.md` and `SECURITY.md` before changing anything.
 
 ## 3. Privacy and permissions
 
-- Keepwatch captures no audio or video, makes **no network requests** except the opt-in update check in `UpdateCheck` (one GET to GitHub's latest-release API, off by default, [#4](https://github.com/AgentSkillDeck/keepwatch/issues/4)), reads no `TCC.db`, and asks for no Full Disk Access, Accessibility or Screen Recording permission. Adding any of these needs an issue first and a `SECURITY.md` update.
+- Keepwatch captures no audio or video, makes **no network requests** except the opt-in update check in `UpdateCheck` (one GET to GitHub's latest-release API, off by default, [#4](https://github.com/AgentSkillDeck/keepwatch/issues/4)), reads no `TCC.db`, and asks for no Full Disk Access or Screen Recording permission. Accessibility is used only by the opt-in **Stay active** (`StayActive`, [#5](https://github.com/AgentSkillDeck/keepwatch/issues/5)): a 1-pixel pointer move when idle, never clicks or keys, never during a lid session. Adding any of these needs an issue first and a `SECURITY.md` update.
 - Never stop a process without a user confirmation, and never stop macOS's own (`ListeningPorts.isSystemPath`).
 - Never store anything about other apps beyond the current run.
 

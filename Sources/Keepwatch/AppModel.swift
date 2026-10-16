@@ -75,6 +75,16 @@ final class AppModel: ObservableObject {
     @Published var menuPresets: [AwakePreset] {
         didSet { defaults.set(menuPresets.map(\.rawValue), forKey: "menuPresets") }
     }
+    /// Opt-in: nudge the pointer when idle so chat apps keep you active (issue #5).
+    @Published var stayActive: Bool {
+        didSet {
+            defaults.set(stayActive, forKey: "stayActive")
+            if stayActive { requestAccessibility() }
+        }
+    }
+    @Published var stayActiveMinutes: Int { didSet { defaults.set(stayActiveMinutes, forKey: "stayActiveMinutes") } }
+    @Published private(set) var accessibilityTrusted = AXIsProcessTrusted()
+    private var nudgedThisIdle = false
     /// Opt-in: check GitHub for a newer version once a day (issue #4).
     @Published var autoCheckUpdates: Bool { didSet { defaults.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
     @Published private(set) var availableUpdate: UpdateCheck.Release?
@@ -134,6 +144,8 @@ final class AppModel: ObservableObject {
         summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
         menuPresets = AwakePreset.menuSelection(from: defaults.stringArray(forKey: "menuPresets"))
         autoCheckUpdates = defaults.bool(forKey: "autoCheckUpdates")
+        stayActive = defaults.bool(forKey: "stayActive")
+        stayActiveMinutes = defaults.object(forKey: "stayActiveMinutes") as? Int ?? StayActive.defaultIdleMinutes
         customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
         customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours
         lidIntent = (defaults.data(forKey: "lidIntent")).flatMap { try? JSONDecoder().decode(LidModeIntent.self, from: $0) } ?? .off
@@ -226,6 +238,7 @@ final class AppModel: ObservableObject {
         for event in decision.events { handle(event) }
 
         guardKeepAwake()
+        keepActiveIfIdle()
         let l = loadSampler.sample()
         if l != load { load = l }
 
@@ -637,6 +650,7 @@ final class AppModel: ObservableObject {
         topApps = DemoData.apps
         security = DemoData.security
         lidIntent = .off
+        banner = nil
     }
 
     private func setTopApps(_ apps: [AppUsage]) { if !demo, apps != topApps { topApps = apps } }
@@ -711,6 +725,27 @@ final class AppModel: ObservableObject {
     func showDashboard(tab: DashboardTab) {
         UserDefaults.standard.set(tab.rawValue, forKey: "dashboardTab")
         showDashboard()
+    }
+
+    /// Asks macOS to list Keepwatch under Accessibility (only when Stay active is turned on).
+    func requestAccessibility() {
+        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+        accessibilityTrusted = AXIsProcessTrustedWithOptions(options)
+    }
+
+    private func keepActiveIfIdle() {
+        guard stayActive else { return }
+        if tickCount % 5 == 0 {
+            let trusted = AXIsProcessTrusted()
+            if trusted != accessibilityTrusted { accessibilityTrusted = trusted }
+        }
+        let idle = StayActive.idleSeconds()
+        if let idle, idle < 5 { nudgedThisIdle = false }
+        guard !nudgedThisIdle,
+              StayActive.shouldNudge(enabled: stayActive, trusted: accessibilityTrusted, lidSession: lidIntent.enabled,
+                                     idleSeconds: idle, idleMinutes: stayActiveMinutes) else { return }
+        // One nudge resets the idle time; the flag only guards a nudge macOS ignored.
+        nudgedThisIdle = !StayActive.nudge()
     }
 
     static var currentVersion: String {

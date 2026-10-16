@@ -69,11 +69,15 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 - **Security checks** (read-only): firewall, FileVault, Gatekeeper, System Integrity Protection, AirDrop.
 - **Mute the mic when the lid closes**, and unmute it when the lid opens.
 - One-click links to the System Settings privacy lists: Camera, Microphone, Screen Recording, Accessibility, Full Disk Access, Automation, Location.
-- Keepwatch needs **no** mic, camera, Full Disk Access or Accessibility permission. It never captures anything; it only asks the system whether a device is running.
+- Keepwatch needs **no** mic, camera or Full Disk Access permission. Accessibility is asked for only if you turn on **Stay active**. It never captures anything; it only asks the system whether a device is running.
+
+**Stay active in chat apps (opt-in)**
+- Slack, Teams, Zoom and similar apps mark you away after a few minutes with no input, even when the Mac is awake. **Stay active** (Stay awake › Lid open) moves the pointer 1 pixel when you've been idle for 2, 4 or 9 minutes, like Amphetamine's cursor option. It never clicks or types, never runs during a lid session, and needs Accessibility, which Keepwatch asks for only when you turn it on.
 
 **Menu and updates**
 - The menu shows the keep-awake lengths you choose (Settings › Buttons in the menu); the rest are under **⋯**, with a custom time and Turn off.
 - **Refresh** (⌘R) reads everything again now. Dashboard, Screenshot and the website link close the menu first.
+- **Stay awake** has two sub-tabs: **Lid open** (stops the Mac sleeping while you're away; no password) and **Lid closed** (keeps working with the lid shut, then sleeps by itself; needs your password once).
 - Lid sessions show the time left and whether the watchdog is running. If the watchdog stops while sleep is off, or doesn't answer **End lid session**, Keepwatch asks for your password and turns sleep back on itself.
 - **Check for updates** in Settings, and an optional daily check (off by default). It only opens the release page; it never installs anything.
 

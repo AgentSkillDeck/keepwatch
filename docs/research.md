@@ -44,4 +44,4 @@ These notes come from two research passes (similar apps and trending projects, t
 
 ## Tested and dropped (2026-10-16)
 
-- **"Stay active" for Slack and Teams.** `IOPMAssertionDeclareUserActivity` (what `caffeinate -u` uses) wakes the display but does **not** reset the HID idle time that chat apps read: measured 95 s idle before the call, 96 s after. Resetting it means posting synthetic input events, which needs the Accessibility permission Keepwatch promises never to ask for. Not shipped.
+- **"Stay active" for Slack and Teams.** `IOPMAssertionDeclareUserActivity` (what `caffeinate -u` uses) wakes the display but does **not** reset the HID idle time that chat apps read: measured 95 s idle before the call, 96 s after. Resetting it means posting synthetic input events, which needs Accessibility. Shipped in 0.3 as the opt-in **Stay active** ([#5](https://github.com/AgentSkillDeck/keepwatch/issues/5)): a 1-pixel mouse move after N idle minutes, the same approach as Amphetamine's cursor option, asking for Accessibility only when switched on.

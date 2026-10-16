@@ -6,9 +6,13 @@ enum DashboardTab: String, CaseIterable, Identifiable {
     case awake, agents, lid, privacy, security, power, ports, settings
     var id: String { rawValue }
 
+    /// The tab bar. Lid closed lives inside Awake as a sub-tab; `.lid` stays so
+    /// links and saved selections that name it still land there.
+    static let shown: [DashboardTab] = [.awake, .agents, .privacy, .security, .power, .ports, .settings]
+
     var title: String {
         switch self {
-        case .awake: "Awake"
+        case .awake: "Stay awake"
         case .agents: "Agents"
         case .lid: "Lid closed"
         case .privacy: "Privacy"
@@ -43,7 +47,8 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 14) {
             SummaryHeader()
             if let banner = model.banner { BannerView(banner: banner) }
-            TabBar(selection: Binding(get: { initialTab ?? tab }, set: { tab = $0 }))
+            TabBar(selection: Binding(get: { (initialTab ?? tab) == .lid ? .awake : (initialTab ?? tab) },
+                                      set: { tab = $0 }))
             ScrollView {
                 section(initialTab ?? tab)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -56,7 +61,30 @@ struct DashboardView: View {
         .onAppear { model.refreshSecurity(); model.refreshPorts() }
     }
 
+    @AppStorage("awakeSub") private var awakeSub = "Lid open"
     @AppStorage("privacySub") private var privacySub = "Now"
+
+    private var lidOpenCard: some View {
+        Card("Lid open", icon: "eye.fill") {
+            AwakeControls()
+            StayActiveRow()
+            SwitchRow(icon: "display", title: "Keep screen on",
+                      subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
+            SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
+                      isOn: $model.notifyWhenAgentsFinish)
+            SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
+                      subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
+            SwitchRow(icon: "display.2", title: "Stay awake with an external display", isOn: $model.autoWhileDisplay)
+            SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
+            SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
+            SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
+                      subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
+            if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
+                Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
     @AppStorage("appsSub") private var appsSub = "Memory"
 
     private var permissionsGrid: some View {
@@ -82,23 +110,16 @@ struct DashboardView: View {
 
     @ViewBuilder private func section(_ tab: DashboardTab) -> some View {
         switch tab {
-        case .awake:
-            Card("Stay awake", icon: "eye.fill") {
-                AwakeControls()
-                SwitchRow(icon: "display", title: "Keep screen on",
-                          subtitle: "Stops the screen going dark", isOn: $model.keepDisplayAwake)
-                SwitchRow(icon: "bell.badge", title: "Tell me when an agent is done",
-                          isOn: $model.notifyWhenAgentsFinish)
-                SwitchRow(icon: "powerplug.fill", title: "Stay awake while plugged in",
-                          subtitle: model.autoReason.map { "On now: \($0)" }, isOn: $model.autoWhilePlugged)
-                SwitchRow(icon: "display.2", title: "Stay awake with an external display", isOn: $model.autoWhileDisplay)
-                SwitchRow(icon: "powerplug", title: "Stop when unplugged", isOn: $model.stopAwakeOnBattery)
-                SwitchRow(icon: "battery.25percent", title: "Stop at 15% battery", isOn: $model.stopAwakeOnLowBattery)
-                SwitchRow(icon: "command", title: "Shortcuts ⌃⌥⌘K and ⌃⌥⌘S",
-                          subtitle: "K: keep-awake on or off. S: screenshot or screen video.", isOn: $model.hotkeyEnabled)
-                if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
-                    Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
-                        .font(.caption).foregroundStyle(.secondary)
+        case .awake, .lid:
+            VStack(alignment: .leading, spacing: 12) {
+                SubTabs(selection: Binding(get: { tab == .lid ? "Lid closed" : awakeSub },
+                                           set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }),
+                        options: ["Lid open", "Lid closed"])
+                AwakeModesExplainer()
+                if tab == .lid || awakeSub == "Lid closed" {
+                    Card("Lid closed", icon: "laptopcomputer") { LidSessionCard(compact: false) }
+                } else {
+                    lidOpenCard
                 }
             }
         case .agents:
@@ -107,8 +128,6 @@ struct DashboardView: View {
                 SwitchRow(icon: "bell.badge", title: "Tell me when an agent goes quiet",
                           subtitle: "It may be done, or waiting for your answer", isOn: $model.notifyAgentWaiting)
             }
-        case .lid:
-            Card("Lid-closed sessions", icon: "laptopcomputer") { LidSessionCard(compact: false) }
         case .privacy:
             VStack(alignment: .leading, spacing: 12) {
                 SubTabs(selection: $privacySub, options: ["Now", "History", "Permissions"])
@@ -167,7 +186,7 @@ struct TabBar: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(DashboardTab.allCases) { tab in
+            ForEach(DashboardTab.shown) { tab in
                 let selected = tab == selection
                 Button { withAnimation(.snappy(duration: 0.2)) { selection = tab } } label: {
                     Label(tab.title, systemImage: tab.icon)
@@ -182,7 +201,7 @@ struct TabBar: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .keyboardShortcut(KeyEquivalent(Character(String((DashboardTab.allCases.firstIndex(of: tab) ?? 0) + 1))),
+                .keyboardShortcut(KeyEquivalent(Character(String((DashboardTab.shown.firstIndex(of: tab) ?? 0) + 1))),
                                   modifiers: .command)
                 .help("\(tab.title) (⌘\((DashboardTab.allCases.firstIndex(of: tab) ?? 0) + 1))")
             }
@@ -817,6 +836,66 @@ struct AboutCard: View {
             SwitchRow(icon: "arrow.triangle.2.circlepath", title: "Check for updates once a day",
                       subtitle: "Off by default. Asks GitHub for the latest version number; nothing else is sent.",
                       isOn: $model.autoCheckUpdates)
+        }
+    }
+}
+
+/// The difference between the two ways to stay awake, in two lines.
+struct AwakeModesExplainer: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            mode("eye.fill", "Lid open",
+                 "Stops the Mac sleeping while you're away, like caffeinate. Closing the lid still sleeps it. No password.")
+            mode("laptopcomputer", "Lid closed",
+                 "Keeps working with the lid shut, no display needed, then sleeps by itself. Needs your password once.")
+        }
+    }
+
+    private func mode(_ icon: String, _ title: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption.weight(.semibold))
+                Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+/// Keeps chat and meeting apps from marking you away (issue #5).
+struct StayActiveRow: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SwitchRow(icon: "cursorarrow.motionlines", title: "Stay active in chat apps",
+                      subtitle: "Slack, Teams, Zoom and others won't show you as away. Moves the pointer 1 pixel when you're idle; never clicks or types.",
+                      isOn: $model.stayActive)
+            if model.stayActive {
+                HStack(spacing: 6) {
+                    Text("When idle for").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    ForEach(StayActive.idleChoices, id: \.self) { m in
+                        Button { model.stayActiveMinutes = m } label: {
+                            Text("\(m) min").font(.system(size: 12, weight: .semibold, design: .rounded))
+                        }
+                        .buttonStyle(TileButtonStyle(selected: model.stayActiveMinutes == m, height: 26))
+                        .frame(width: 70)
+                    }
+                }
+                .padding(.leading, 38)
+                if !model.accessibilityTrusted {
+                    HStack {
+                        Label("Needs Accessibility: turn on Keepwatch in the list.", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption).foregroundStyle(.orange)
+                        Spacer()
+                        Button("Open Accessibility") { model.open(.accessibility) }.controlSize(.small)
+                    }
+                    .padding(.leading, 38)
+                }
+            }
         }
     }
 }

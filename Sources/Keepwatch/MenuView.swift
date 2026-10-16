@@ -61,6 +61,7 @@ struct StatusHeader: View {
                       size: large ? 64 : 46)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(large ? .title2 : .title3, design: .rounded).weight(.semibold))
+                    .lineLimit(1).minimumScaleFactor(0.75)
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)

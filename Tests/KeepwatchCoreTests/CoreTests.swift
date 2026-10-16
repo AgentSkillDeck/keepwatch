@@ -815,3 +815,33 @@ final class UpdateCheckTests: XCTestCase {
         XCTAssertTrue(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(86_400 * 30), now: now), "a clock set back can't block checks")
     }
 }
+
+final class StayActiveTests: XCTestCase {
+    func nudge(enabled: Bool = true, trusted: Bool = true, lid: Bool = false, idle: TimeInterval?, minutes: Int = 4) -> Bool {
+        StayActive.shouldNudge(enabled: enabled, trusted: trusted, lidSession: lid, idleSeconds: idle, idleMinutes: minutes)
+    }
+
+    func testNudgesOnlyAfterTheIdleLimit() {
+        XCTAssertFalse(nudge(idle: 239))
+        XCTAssertTrue(nudge(idle: 240))
+        XCTAssertTrue(nudge(idle: 130, minutes: 2))
+    }
+
+    func testNeverWhenOffUntrustedUnknownOrLidClosed() {
+        XCTAssertFalse(nudge(enabled: false, idle: 999))
+        XCTAssertFalse(nudge(trusted: false, idle: 999))
+        XCTAssertFalse(nudge(idle: nil))
+        XCTAssertFalse(nudge(idle: .infinity))
+        XCTAssertFalse(nudge(lid: true, idle: 999), "a closed laptop must not look active")
+    }
+
+    func testOutOfRangeMinutesAreClamped() {
+        XCTAssertFalse(nudge(idle: 30, minutes: 0), "0 becomes 1 minute, not every tick")
+        XCTAssertFalse(nudge(idle: 3_000, minutes: 10_000), "capped at an hour")
+        XCTAssertTrue(nudge(idle: 3_600, minutes: 10_000))
+    }
+
+    func testIdleTimeIsReadable() {
+        XCTAssertNotNil(StayActive.idleSeconds())
+    }
+}
