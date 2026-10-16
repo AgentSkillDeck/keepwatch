@@ -492,11 +492,17 @@ struct LidSessionCard: View {
                 HStack(spacing: 6) {
                     Text("Sleep after").font(.caption.weight(.medium)).foregroundStyle(.secondary)
                     ForEach([1.0, 3, 6, 12], id: \.self) { h in
-                        Button { model.lidHours = h } label: {
-                            Text(Format.hours(h)).font(.system(size: 12, weight: .semibold, design: .rounded))
+                        if compact {
+                            Button { model.lidHours = h } label: {
+                                Text(Format.hours(h)).font(.system(size: 12, weight: .semibold, design: .rounded))
+                            }
+                            .buttonStyle(TileButtonStyle(selected: model.lidHours == h, height: 28))
+                        } else {
+                            Button(Format.hours(h)) { model.lidHours = h }
+                                .buttonStyle(ChipButtonStyle(selected: model.lidHours == h))
                         }
-                        .buttonStyle(TileButtonStyle(selected: model.lidHours == h, height: 28))
                     }
+                    if !compact { Spacer(minLength: 0) }
                 }
                 if !compact {
                     SwitchRow(icon: "alarm", title: "Also sleep at a set time",

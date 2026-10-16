@@ -65,7 +65,7 @@ struct DashboardView: View {
     @AppStorage("privacySub") private var privacySub = "Now"
 
     private var lidOpenCard: some View {
-        Card("Keep awake", icon: "eye.fill") {
+        Card("Keep awake (laptop open)", icon: "eye.fill") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
@@ -115,7 +115,7 @@ struct DashboardView: View {
                 AwakeModePicker(selection: Binding(get: { tab == .lid ? "Lid closed" : awakeSub },
                                                    set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }))
                 if tab == .lid || awakeSub == "Lid closed" {
-                    Card("Lid-closed session", icon: "laptopcomputer") { LidSessionCard(compact: false) }
+                    Card("Run with the laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
                 } else {
                     lidOpenCard
                 }
@@ -851,17 +851,20 @@ struct AwakeModePicker: View {
     @Binding var selection: String
 
     var body: some View {
-        HStack(spacing: 10) {
-            mode("eye.fill", "Lid open",
-                 "Stops the Mac sleeping while you're away, like caffeinate. Closing the lid still sleeps it. No password.")
-            mode("laptopcomputer", "Lid closed",
-                 "Keeps working with the lid shut, then sleeps by itself. Needs your password once.")
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Is your laptop open or closed while it works?").font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 10) {
+                mode("Lid open", icon: "laptopcomputer", title: "Laptop stays open",
+                     "Your Mac won't sleep while you step away. If you close the lid, it sleeps as usual. No password.")
+                mode("Lid closed", icon: "laptopcomputer.slash", title: "Laptop closed",
+                     "Agents keep working with the lid shut, e.g. in your bag. Sleeps by itself when the time is up. Asks for your password once.")
+            }
         }
     }
 
-    private func mode(_ icon: String, _ title: String, _ text: String) -> some View {
-        let selected = selection == title
-        return Button { withAnimation(.snappy(duration: 0.2)) { selection = title } } label: {
+    private func mode(_ key: String, icon: String, title: String, _ text: String) -> some View {
+        let selected = selection == key
+        return Button { withAnimation(.snappy(duration: 0.2)) { selection = key } } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: icon).font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(selected ? Color.black.opacity(0.85) : Brand.teal)
