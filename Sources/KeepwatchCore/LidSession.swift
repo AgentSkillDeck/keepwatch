@@ -84,6 +84,7 @@ public enum LidWatchdog {
         var pmset = "/usr/bin/pmset"
         var ioreg = "/usr/sbin/ioreg"
         var launchctl = "/bin/launchctl"
+        var logger = "/usr/bin/logger"
         var label = LidWatchdog.label
         var interval = 30
         /// Floor for the lid-closed limit; tests lower it to run in seconds.
@@ -111,13 +112,14 @@ public enum LidWatchdog {
         // a background child instead, it kept osascript waiting for the whole
         // session and died with it.) launchd restarts a submitted job that
         // exits, so the loop ends by removing its own job, and a restarted
-        // copy exits at once if sleep is already back on. Why it stopped is
-        // appended to "<stop file>.log".
+        // copy exits at once if sleep is already back on. Why it stopped goes
+        // to the system log (tag keepwatch-lid), never to a file in the
+        // user's folders, which root must not write to.
         let loop = """
-        S='\(stopFile)'; L='\(stopFile).log'; \
+        S='\(stopFile)'; \
         \(tools.pmset) -g | /usr/bin/grep -Eq 'SleepDisabled[[:space:]]+1' || { \(lc) remove \(label); exit 0; }; \
         END=$(( $(/bin/date +%s) + \(deadline) )); LIDMAX=\(lidLimit); CLOSED=0; R=deadline; \
-        echo "$(/bin/date) started" >> "$L"; \
+        \(tools.logger) -t keepwatch-lid started; \
         while :; do \
         NOW=$(/bin/date +%s); [ "$NOW" -ge "$END" ] && break; [ -e "$S" ] && { R=stop-requested; break; }; \
         B=$(\(tools.pmset) -g batt); \
@@ -130,7 +132,7 @@ public enum LidWatchdog {
         then CLOSED=$((CLOSED + \(tools.interval))); else CLOSED=0; fi; \
         [ "$CLOSED" -ge "$LIDMAX" ] && { R=lid-closed-limit; break; }; fi; \
         /bin/sleep \(tools.interval); done; \
-        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; echo "$(/bin/date) ended: $R" >> "$L"; \
+        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; \(tools.logger) -t keepwatch-lid "ended: $R"; \
         if [ \(sleepAfter) -eq 1 ] && \(tools.ioreg) -r -k AppleClamshellState -d 1 | /usr/bin/grep -q '"AppleClamshellState" = Yes'; \
         then \(tools.pmset) sleepnow; fi; \
         \(lc) remove \(label)

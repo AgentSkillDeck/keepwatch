@@ -100,7 +100,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - Slack, Teams, Zoom and similar apps mark you away after a few minutes with no input, even when the Mac is awake. **Stay active** (Stay awake › Lid open) moves the pointer 1 pixel when you've been idle for 2, 4 or 9 minutes, like Amphetamine's cursor option. It never clicks or types, never runs during a lid session, and needs Accessibility, which Keepwatch asks for only when you turn it on.
 
 **Menu and updates**
-- The menu shows the keep-awake lengths you choose (Settings › Buttons in the menu); the rest are under **⋯**, with a custom time and Turn off.
+- You choose what the menu shows (Settings › Menu): privacy, keep awake, laptop closed, agent sessions by name, and the apps using the most memory. Other keep-awake lengths are under **⋯**, with a custom time and Turn off.
 - **Refresh** (⌘R) reads everything again now. Dashboard, Screenshot and the website link close the menu first.
 - **Stay awake** has two sub-tabs: **Lid open** (stops the Mac sleeping while you're away; no password) and **Lid closed** (keeps working with the lid shut, then sleeps by itself; needs your password once).
 - Lid sessions show the time left and whether the watchdog is running. If the watchdog stops while sleep is off, or doesn't answer **End lid session**, Keepwatch asks for your password and turns sleep back on itself.

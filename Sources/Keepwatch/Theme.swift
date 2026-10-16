@@ -38,13 +38,16 @@ struct SectionHeader: View {
     var subtitle: String?
     var tint: Color = Brand.teal
 
+    /// A heading, not a row: a small inline icon, bold title and a rule
+    /// under it, so it can't be mistaken for one of the switches below.
     var body: some View {
-        HStack(spacing: 10) {
-            IconBadge(icon: icon, tint: tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(.headline, design: .rounded))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
+                Text(title).font(.system(size: 15, weight: .bold, design: .rounded))
                 if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
             }
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
         }
     }
 }

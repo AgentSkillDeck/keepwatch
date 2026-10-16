@@ -86,6 +86,7 @@ struct DashboardView: View {
         }
     }
     @AppStorage("appsSub") private var appsSub = "Memory"
+    @State private var appsQuery = ""
 
     private var permissionsGrid: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -148,21 +149,41 @@ struct DashboardView: View {
             }
         case .ports:
             VStack(alignment: .leading, spacing: 12) {
-                SubTabs(selection: $appsSub, options: ["Memory", "Ports"])
+                HStack {
+                    SubTabs(selection: $appsSub, options: ["Memory", "Ports"])
+                    SearchField(text: $appsQuery, prompt: appsSub == "Ports" ? "Search ports or apps" : "Search apps")
+                }
                 if appsSub == "Ports" {
-                    Card("Listening ports", icon: "network") { PortsList() }
+                    Card("Listening ports", icon: "network") { PortsList(query: appsQuery) }
                 } else {
-                    Card("Using the most memory", icon: "memorychip") { TopAppsList() }
+                    Card("Using the most memory", icon: "memorychip") { TopAppsList(query: appsQuery) }
                 }
             }
         case .settings:
-            AboutCard()
-            MenuButtonsCard()
-            Card("Settings", icon: "slider.horizontal.3") {
-                ForEach(QuickToggle.allCases) { t in
-                    SwitchRow(icon: t.icon, title: t.title,
-                              isOn: Binding(get: { model.toggles[t] ?? false }, set: { model.setToggle(t, $0) }))
+            VStack(alignment: .leading, spacing: 12) {
+                SubTabs(selection: $settingsSub, options: ["General", "Menu", "Mac tweaks", "About"])
+                switch settingsSub {
+                case "Menu": MenuButtonsCard()
+                case "Mac tweaks":
+                    Card("Mac tweaks", icon: "wand.and.stars") {
+                        Text("Shortcuts to macOS settings. Each one changes only that setting and can be turned back.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(QuickToggle.allCases) { t in
+                            SwitchRow(icon: t.icon, title: t.title,
+                                      isOn: Binding(get: { model.toggles[t] ?? false }, set: { model.setToggle(t, $0) }))
+                        }
+                    }
+                case "About": AboutCard()
+                default: generalSettings
                 }
+            }
+        }
+    }
+
+    @AppStorage("settingsSub") private var settingsSub = "General"
+
+    private var generalSettings: some View {
+            Card("General", icon: "slider.horizontal.3") {
                 SwitchRow(icon: "speaker.wave.2", title: "Sound with notifications", isOn: $model.notificationSound)
                 SwitchRow(icon: "power.circle", title: "Open Keepwatch at login",
                           subtitle: "Recommended if you use lid sessions",
@@ -174,7 +195,6 @@ struct DashboardView: View {
                 }
                 .controlSize(.regular)
             }
-        }
     }
 }
 
@@ -267,6 +287,11 @@ struct SummaryHeader: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .top) {
                 StatusHeader(large: true)
+                Button { model.refreshNow() } label: { Label("Refresh", systemImage: "arrow.clockwise") }
+                    .buttonStyle(.borderless)
+                    .help("Read everything again now (⌘R)")
+                    .keyboardShortcut("r")
+                    .padding(.trailing, 6)
                 Menu {
                     ForEach(SummaryTile.allCases) { tile in
                         Toggle(tile.title, isOn: Binding(get: { model.summaryTiles.contains(tile) },
@@ -492,13 +517,22 @@ struct Card<Content: View>: View {
 struct PortsList: View {
     @EnvironmentObject var model: AppModel
     @State private var confirming: ListeningPort?
+    var query = ""
+
+    private var shown: [ListeningPort] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return Array(model.ports.prefix(40)) }
+        return model.ports.filter { $0.process.localizedCaseInsensitiveContains(q) || String($0.port).hasPrefix(q) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if model.ports.isEmpty {
                 Text("No open ports.").font(.callout).foregroundStyle(.secondary)
+            } else if shown.isEmpty {
+                Text("Nothing matches “\(query)”.").font(.callout).foregroundStyle(.secondary)
             }
-            ForEach(model.ports.prefix(40), id: \.self) { p in
+            ForEach(shown, id: \.self) { p in
                 HStack(spacing: 10) {
                     IconBadge(icon: p.isSystem ? "apple.logo" : "chevron.left.forwardslash.chevron.right",
                               tint: p.isSystem ? .secondary : Brand.teal)
@@ -684,13 +718,24 @@ struct PrivacyHistory: View {
 struct TopAppsList: View {
     @EnvironmentObject var model: AppModel
     @State private var confirming: AppUsage?
+    var query = ""
+
+    /// The top 12, or every app that matches the search.
+    private var shown: [AppUsage] {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return Array(model.topApps.prefix(12)) }
+        return model.topApps.filter { $0.name.localizedCaseInsensitiveContains(q) }
+    }
     private let timer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.topApps.isEmpty { Text("Reading memory use…").font(.callout).foregroundStyle(.secondary) }
             let top = model.topApps.first?.bytes ?? 1
-            ForEach(model.topApps) { app in
+            if !model.topApps.isEmpty, shown.isEmpty {
+                Text("Nothing matches “\(query)”.").font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(shown) { app in
                 HStack(spacing: 10) {
                     AppIcon(path: app.path)
                     VStack(alignment: .leading, spacing: 3) {
@@ -777,20 +822,38 @@ struct MenuButtonsCard: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
-        Card("Buttons in the menu", icon: "rectangle.grid.1x2") {
-            Text("Pick up to \(AwakePreset.menuMax). The rest are under ⋯ in the menu.")
+        Card("What the menu shows", icon: "menubar.rectangle") {
+            Text("Choose what appears in the small window under the menu-bar icon. The status and the bottom buttons always show.")
                 .font(.caption).foregroundStyle(.secondary)
-            HStack(spacing: 6) {
-                ForEach(AwakePreset.allCases) { preset in
-                    let on = model.menuPresets.contains(preset)
-                    Button { model.menuPresets = AwakePreset.toggle(preset, in: model.menuPresets) } label: {
-                        Text(preset.label).font(.system(size: 12, weight: .semibold, design: .rounded))
-                    }
-                    .buttonStyle(TileButtonStyle(selected: on, height: 30))
-                    .disabled(!on && model.menuPresets.count >= AwakePreset.menuMax)
-                }
+            ForEach(MenuSection.allCases) { section in
+                SwitchRow(icon: section.icon, title: section.title,
+                          isOn: Binding(get: { model.menuSections.contains(section) },
+                                        set: { _ in model.menuSections = MenuSection.toggle(section, in: model.menuSections) }))
+            }
+            Button("Reset to default") { model.menuSections = MenuSection.defaults }
+                .buttonStyle(.borderless).font(.caption)
+        }
+    }
+}
+
+/// A rounded search box that filters a list as you type.
+struct SearchField: View {
+    @Binding var text: String
+    var prompt: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $text).textFieldStyle(.plain)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .buttonStyle(.plain).help("Clear")
             }
         }
+        .font(.system(size: 12))
+        .padding(.horizontal, 10).frame(width: 220, height: 28)
+        .background(Capsule().fill(Color.primary.opacity(0.07)))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.08)))
     }
 }
 
@@ -857,8 +920,9 @@ struct AwakeModePicker: View {
                 mode("Lid open", icon: "laptopcomputer", title: "Laptop stays open",
                      "Your Mac won't sleep while you step away. If you close the lid, it sleeps as usual. No password.")
                 mode("Lid closed", icon: "laptopcomputer.slash", title: "Laptop closed",
-                     "Agents keep working with the lid shut, e.g. in your bag. Sleeps by itself when the time is up. Asks for your password once.")
+                     "Agents keep working with the lid shut. Sleeps by itself when time is up. Asks for your password once.")
             }
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -878,7 +942,7 @@ struct AwakeModePicker: View {
                 Spacer(minLength: 0)
             }
             .padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(selected ? Brand.teal.opacity(0.10) : Color.primary.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)

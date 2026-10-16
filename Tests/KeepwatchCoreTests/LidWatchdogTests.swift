@@ -24,6 +24,7 @@ final class LidWatchdogTests: XCTestCase {
         else echo "$*" >> \(log.path); \
         [ "$2" = "disablesleep" ] && echo "$3" > \(dir.path)/disabled; fi
         """)
+        try stub("logger", #"shift 2; echo "$*" >> \#(dir.path)/syslog"#)
         try stub("ioreg", #"echo "  | \"AppleClamshellState\" = $(cat \#(dir.path)/lid)""#)
     }
 
@@ -54,7 +55,8 @@ final class LidWatchdogTests: XCTestCase {
 
     var tools: LidWatchdog.Tools {
         LidWatchdog.Tools(pmset: dir.appendingPathComponent("pmset").path,
-                          ioreg: dir.appendingPathComponent("ioreg").path, label: label, interval: 1, minLidSeconds: 1)
+                          ioreg: dir.appendingPathComponent("ioreg").path,
+                          logger: dir.appendingPathComponent("logger").path, label: label, interval: 1, minLidSeconds: 1)
     }
 
     func start(_ plan: LidSessionPlan) throws {
@@ -142,8 +144,10 @@ final class LidWatchdogTests: XCTestCase {
         XCTAssertEqual(calls(waitingFor: "never", timeout: 0.1), ["-a disablesleep 1"], "still supervising")
         try "x".write(to: stop, atomically: true, encoding: .utf8)
         XCTAssertEqual(calls(waitingFor: "sleepnow"), ["-a disablesleep 1", "-a disablesleep 0", "sleepnow"])
-        let log = (try? String(contentsOf: URL(fileURLWithPath: stop.path + ".log"), encoding: .utf8)) ?? ""
-        XCTAssertTrue(log.contains("ended: stop-requested"), log)
+        usleep(300_000)
+        let log = (try? String(contentsOf: dir.appendingPathComponent("syslog"), encoding: .utf8)) ?? ""
+        XCTAssertEqual(log, "started\nended: stop-requested\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stop.path + ".log"), "root writes nothing in the user's folders")
     }
 
     /// The loop removes its own job when done, so launchd doesn't restart it.

@@ -72,6 +72,10 @@ final class AppModel: ObservableObject {
     /// Notify when the mic or camera turns on.
     @Published var alertOnMicCamera: Bool { didSet { defaults.set(alertOnMicCamera, forKey: "alertMicCamera") } }
     /// The keep-awake buttons shown in the menu (the rest are under "More").
+    /// Which parts the menu-bar window shows.
+    @Published var menuSections: [MenuSection] {
+        didSet { defaults.set(menuSections.map(\.rawValue), forKey: "menuSections") }
+    }
     @Published var menuPresets: [AwakePreset] {
         didSet { defaults.set(menuPresets.map(\.rawValue), forKey: "menuPresets") }
     }
@@ -144,6 +148,7 @@ final class AppModel: ObservableObject {
             .compactMap(SummaryTile.init(rawValue:))
         summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
         menuPresets = AwakePreset.menuSelection(from: defaults.stringArray(forKey: "menuPresets"))
+        menuSections = MenuSection.selection(from: defaults.stringArray(forKey: "menuSections"))
         autoCheckUpdates = defaults.bool(forKey: "autoCheckUpdates")
         stayActive = defaults.bool(forKey: "stayActive")
         stayActiveMinutes = defaults.object(forKey: "stayActiveMinutes") as? Int ?? StayActive.defaultIdleMinutes
@@ -621,13 +626,13 @@ final class AppModel: ObservableObject {
 
     func refreshTopApps() {
         Task.detached(priority: .utility) { [weak self] in
-            let apps = TopApps.current(limit: 12)
+            let apps = TopApps.current(limit: 60)
             await self?.setTopApps(apps)
         }
     }
 
     /// Synchronous read, for snapshot rendering only.
-    func refreshTopAppsNow() { if !demo { topApps = TopApps.current(limit: 12) } }
+    func refreshTopAppsNow() { if !demo { topApps = TopApps.current(limit: 60) } }
 
     /// Replaces live readings with `DemoData` for `--render-snapshots DIR --demo`.
     /// Stops polling so nothing real comes back, and saves nothing.

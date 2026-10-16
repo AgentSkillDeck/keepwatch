@@ -886,3 +886,16 @@ final class ScreenshotToolbarTests: XCTestCase {
                                                      screens: [laptop, CGRect(x: 1280, y: 0, width: 1920, height: 1080)]))
     }
 }
+
+final class MenuSectionTests: XCTestCase {
+    func testSelectionIsCleanedAndOrdered() {
+        XCTAssertEqual(MenuSection.selection(from: nil), MenuSection.defaults)
+        XCTAssertEqual(MenuSection.selection(from: ["memory", "privacy", "bogus", "privacy"]), [.privacy, .memory])
+        XCTAssertEqual(MenuSection.selection(from: []), [], "an empty menu is allowed")
+    }
+
+    func testToggle() {
+        XCTAssertEqual(MenuSection.toggle(.agents, in: MenuSection.defaults), [.privacy, .keepAwake, .laptopClosed, .agents])
+        XCTAssertEqual(MenuSection.toggle(.privacy, in: [.privacy, .memory]), [.memory])
+    }
+}

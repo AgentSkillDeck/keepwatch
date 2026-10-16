@@ -12,12 +12,17 @@ struct MenuView: View {
         VStack(alignment: .leading, spacing: 14) {
             StatusHeader()
             if let banner = model.banner { BannerView(banner: banner) }
-            PrivacySwitches(compact: true)
-            Divider()
-            AwakeControls(showCustom: customOpen, compact: true)
-            Divider()
-            LidSessionCard(compact: true)
-            Divider()
+            ForEach(model.menuSections) { section in
+                switch section {
+                case .privacy: PrivacySwitches(compact: true)
+                case .keepAwake: AwakeControls(showCustom: customOpen, compact: true)
+                case .laptopClosed: LidSessionCard(compact: true)
+                case .agents: MenuAgents()
+                case .memory: MenuMemory()
+                }
+                Divider()
+            }
+            if model.menuSections.isEmpty { Divider() }
             HStack {
                 Button {
                     MenuPanel.close()
@@ -50,6 +55,56 @@ struct MenuView: View {
     }
 }
 
+/// Up to four agent sessions, by name, for the menu.
+struct MenuAgents: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Eyebrow(text: "Agent sessions")
+            if model.agentSessions.isEmpty {
+                Text("No agents running.").font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(model.agentSessions.prefix(4)) { s in
+                HStack(spacing: 8) {
+                    AgentBadge(name: s.agent, size: 18)
+                    Text(model.sessionTitles[s.pid] ?? s.folder.map { ($0 as NSString).lastPathComponent } ?? s.agent)
+                        .font(.system(size: 12)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let started = s.started {
+                        Text(Format.duration(Date().timeIntervalSince(started))).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            if model.agentSessions.count > 4 {
+                Text("and \(model.agentSessions.count - 4) more").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// The three apps using the most memory, for the menu.
+struct MenuMemory: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Eyebrow(text: "Using the most memory")
+            if model.topApps.isEmpty { Text("Reading memory use…").font(.caption).foregroundStyle(.secondary) }
+            ForEach(model.topApps.prefix(3)) { app in
+                HStack(spacing: 8) {
+                    AppIcon(path: app.path).frame(width: 18, height: 18)
+                    Text(app.name).font(.system(size: 12)).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: app.bytes), countStyle: .memory))
+                        .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+        }
+        .onAppear { model.refreshTopApps() }
+    }
+}
+
 /// The orb, a one-line status and the time left.
 struct StatusHeader: View {
     @EnvironmentObject var model: AppModel
@@ -65,6 +120,7 @@ struct StatusHeader: View {
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
+            if !large {
             Button { model.refreshNow() } label: {
                 Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 26)
@@ -74,6 +130,7 @@ struct StatusHeader: View {
             .foregroundStyle(.secondary)
             .help("Refresh now")
             .keyboardShortcut("r")
+            }
             if !large, let p = model.power, let pct = p.batteryPercent {
                 HStack(spacing: 4) {
                     Image(systemName: p.onBattery ? batteryIcon(pct) : "powerplug.fill")
@@ -339,11 +396,6 @@ struct AwakeControls: View {
                 Divider()
                 Button("Custom time…") { withAnimation(.snappy) { showCustom = true } }
                 Button("Turn off") { model.setMode(.off) }.disabled(model.mode == .off)
-                Divider()
-                Button("Choose these buttons…") {
-                    MenuPanel.close()
-                    model.showDashboard(tab: .settings)
-                }
             } label: {
                 Image(systemName: "ellipsis").font(.system(size: 14, weight: .bold))
             }
@@ -433,6 +485,7 @@ struct AwakeControls: View {
 struct LidSessionCard: View {
     @EnvironmentObject var model: AppModel
     var compact: Bool
+    @State private var showLidCustom = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -502,7 +555,18 @@ struct LidSessionCard: View {
                                 .buttonStyle(ChipButtonStyle(selected: model.lidHours == h))
                         }
                     }
-                    if !compact { Spacer(minLength: 0) }
+                    if !compact {
+                        Button { withAnimation(.snappy) { showLidCustom.toggle() } } label: { Label("Custom", systemImage: "slider.horizontal.3") }
+                            .buttonStyle(ChipButtonStyle(selected: showLidCustom || ![1.0, 3, 6, 12].contains(model.lidHours)))
+                        Spacer(minLength: 0)
+                    }
+                }
+                if !compact && (showLidCustom || ![1.0, 3, 6, 12].contains(model.lidHours)) {
+                    Stepper(value: $model.lidHours, in: 0.25...12, step: 0.25) {
+                        Text("Sleep after \(Format.duration(model.lidHours * 3600)) with the lid closed")
+                            .font(.callout).monospacedDigit()
+                    }
+                    .padding(.leading, 2)
                 }
                 if !compact {
                     SwitchRow(icon: "alarm", title: "Also sleep at a set time",
