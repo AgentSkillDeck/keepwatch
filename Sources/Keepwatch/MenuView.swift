@@ -75,12 +75,43 @@ struct MenuAgents: View {
                     if let started = s.started {
                         Text(Format.duration(Date().timeIntervalSince(started))).font(.caption).foregroundStyle(.secondary)
                     }
+                    ConfirmButton(label: "Stop", help: "Stop this session (click twice)") { model.stopAgent(s) }
                 }
             }
             if model.agentSessions.count > 4 {
                 Text("and \(model.agentSessions.count - 4) more").font(.caption).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// A small ⊗ that turns into a red "Stop?" on the first click and acts on
+/// the second; it resets after a few seconds. Dialogs don't suit the menu panel.
+struct ConfirmButton: View {
+    var label: String
+    var help: String
+    var action: () -> Void
+    @State private var armed = false
+
+    var body: some View {
+        Button {
+            if armed { armed = false; action() } else {
+                withAnimation(.snappy(duration: 0.15)) { armed = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { withAnimation { armed = false } }
+            }
+        } label: {
+            if armed {
+                Text("\(label)?").font(.system(size: 10, weight: .bold))
+                    .padding(.horizontal, 7).frame(height: 18)
+                    .foregroundStyle(.white).background(Capsule().fill(Brand.live))
+            } else {
+                Image(systemName: "xmark.circle.fill").font(.system(size: 13)).foregroundStyle(.secondary)
+                    .frame(width: 22, height: 18)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(armed ? "Confirm \(label.lowercased())" : label)
     }
 }
 
@@ -99,6 +130,12 @@ struct MenuMemory: View {
                     Spacer(minLength: 4)
                     Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: app.bytes), countStyle: .memory))
                         .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    if app.isSystem {
+                        Image(systemName: "applelogo").font(.caption2).foregroundStyle(.tertiary).frame(width: 22)
+                            .help("Part of macOS; Keepwatch won't quit it")
+                    } else {
+                        ConfirmButton(label: "Quit", help: "Quit \(app.name) (click twice). It may ask you to save.") { model.quitApp(app) }
+                    }
                 }
             }
         }
