@@ -68,7 +68,7 @@ struct DashboardView: View {
 
     private var lidOpenCard: some View {
         Card("Laptop open", icon: "eye.fill",
-             subtitle: "No sleep while the lid is open. No password.") {
+             subtitle: "No sleep while the lid is open.") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",

@@ -512,7 +512,7 @@ struct AwakeControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-            MenuHeading("Keep awake", info: "No sleep while the lid is open. No password.") {
+            MenuHeading("Keep awake", info: "No sleep while the lid is open.") {
                 if isTimedOrForever {
                     Button("Turn off") { model.setMode(.off) }
                         .buttonStyle(.borderless).font(.caption.weight(.semibold))
