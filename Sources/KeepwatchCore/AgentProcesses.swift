@@ -148,10 +148,13 @@ public struct AgentSession: Equatable, Hashable, Identifiable, Sendable {
     /// The session's working directory, if readable.
     public var folder: String?
     public var started: Date?
+    /// The agent's own session id, when its arguments carry one.
+    public var sessionID: String?
     public var id: Int32 { pid }
 
-    public init(pid: Int32, agent: String, folder: String? = nil, started: Date? = nil) {
+    public init(pid: Int32, agent: String, folder: String? = nil, started: Date? = nil, sessionID: String? = nil) {
         self.pid = pid; self.agent = agent; self.folder = folder; self.started = started
+        self.sessionID = sessionID
     }
 
     /// Last path component of the folder, or "~" for the home folder.
@@ -171,7 +174,8 @@ extension AgentMatcher {
         processes.compactMap { p -> AgentSession? in
             guard let agent = agentName(for: p) else { return nil }
             let d = details(p.pid)
-            return AgentSession(pid: p.pid, agent: agent, folder: d.folder, started: d.started)
+            return AgentSession(pid: p.pid, agent: agent, folder: d.folder, started: d.started,
+                                sessionID: SessionTitles.sessionID(fromArguments: p.arguments))
         }
         .sorted { ($0.started ?? .distantFuture, $0.pid) < ($1.started ?? .distantFuture, $1.pid) }
     }

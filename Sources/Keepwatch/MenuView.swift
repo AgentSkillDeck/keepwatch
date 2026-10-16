@@ -14,12 +14,13 @@ struct MenuView: View {
             if let banner = model.banner { BannerView(banner: banner) }
             PrivacySwitches(compact: true)
             Divider()
-            AwakeControls(showCustom: customOpen)
+            AwakeControls(showCustom: customOpen, compact: true)
             Divider()
             LidSessionCard(compact: true)
             Divider()
             HStack {
                 Button {
+                    MenuPanel.close()
                     openWindow(id: "dashboard")
                     NSApp.activate(ignoringOtherApps: true)
                 } label: {
@@ -27,9 +28,18 @@ struct MenuView: View {
                 }
                 .keyboardShortcut(",")
                 Spacer()
-                Button { Screenshot.openToolbar() } label: { Label("Screenshot", systemImage: "camera.viewfinder") }
+                Button {
+                    MenuPanel.close()
+                    // Let the menu fade first so it isn't in the picture.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { Screenshot.openToolbar() }
+                } label: { Label("Screenshot", systemImage: "camera.viewfinder") }
                     .help("Area, window, screen or video, with Markup to edit (⌃⌥⌘S)")
                 Spacer()
+                Button {
+                    MenuPanel.close()
+                    if let url = AppModel.websiteURL { NSWorkspace.shared.open(url) }
+                } label: { Image(systemName: "globe") }
+                    .help("Keepwatch website")
                 Button { model.quit() } label: { Label("Quit", systemImage: "power") }
             }
             .buttonStyle(.borderless)
@@ -54,6 +64,15 @@ struct StatusHeader: View {
                 Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer(minLength: 0)
+            Button { model.refreshNow() } label: {
+                Image(systemName: "arrow.clockwise").font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 26)
+                    .background(Color.primary.opacity(0.06), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Refresh now")
+            .keyboardShortcut("r")
             if !large, let p = model.power, let pct = p.batteryPercent {
                 HStack(spacing: 4) {
                     Image(systemName: p.onBattery ? batteryIcon(pct) : "powerplug.fill")
@@ -232,16 +251,34 @@ struct PrivacySwitches: View {
     }
 }
 
+/// The menu-bar panel. Closing it is how buttons that open something else
+/// get it out of the way (SwiftUI has no API for this).
+enum MenuPanel {
+    static func close() {
+        if let window = NSApp.keyWindow, window is NSPanel { window.close() }
+    }
+}
+
 struct AwakeControls: View {
     @EnvironmentObject var model: AppModel
     @State var showCustom = false
+    /// The menu shows a single row of the user's chosen lengths.
+    var compact = false
     @State private var until = Date().addingTimeInterval(3_600)
 
     private static let presets: [(String, TimeInterval)] = [("1 h", 3_600), ("3 h", 10_800), ("8 h", 28_800), ("1 day", 86_400)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Eyebrow(text: "Keep awake")
+            HStack {
+                Eyebrow(text: "Keep awake")
+                Spacer()
+                if compact && isTimedOrForever {
+                    Button("Turn off") { model.setMode(.off) }
+                        .buttonStyle(.borderless).font(.caption.weight(.semibold))
+                }
+            }
+            if compact { compactRow } else {
             Grid(horizontalSpacing: 6, verticalSpacing: 6) {
                 GridRow {
                     ForEach(Self.presets, id: \.1) { label, seconds in
@@ -270,6 +307,7 @@ struct AwakeControls: View {
                     .help("Stop keeping awake; the Mac sleeps normally")
                 }
             }
+            }
             if showCustom { customPanel.transition(.opacity.combined(with: .move(edge: .top))) }
             HStack(spacing: 10) {
                 IconBadge(icon: "terminal", tint: Brand.teal)
@@ -285,6 +323,56 @@ struct AwakeControls: View {
                     .labelsHidden()
                     .toggleStyle(BrandSwitchStyle())
             }
+        }
+    }
+
+    /// The user's chosen lengths, then everything else in one menu.
+    private var compactRow: some View {
+        HStack(spacing: 6) {
+            ForEach(model.menuPresets) { preset in
+                Button { model.keepAwake(preset) } label: {
+                    if preset == .forever {
+                        Image(systemName: "infinity").font(.system(size: 14, weight: .bold))
+                    } else {
+                        Text(preset.label).font(.system(size: 13, weight: .semibold, design: .rounded))
+                    }
+                }
+                .buttonStyle(TileButtonStyle(selected: isSelected(preset), height: 34))
+                .help(preset == .forever ? "Until you turn it off" : "Stay awake for \(preset.label)")
+            }
+            Menu {
+                ForEach(AwakePreset.allCases.filter { !model.menuPresets.contains($0) }) { preset in
+                    Button(preset == .forever ? "Until I turn it off" : preset.label) { model.keepAwake(preset) }
+                }
+                Divider()
+                Button("Custom time…") { withAnimation(.snappy) { showCustom = true } }
+                Button("Turn off") { model.setMode(.off) }.disabled(model.mode == .off)
+                Divider()
+                Button("Choose these buttons…") {
+                    MenuPanel.close()
+                    model.showDashboard(tab: .settings)
+                }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 14, weight: .bold))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 44, height: 34)
+            .background(Color.primary.opacity(showCustom || isCustom ? 0.14 : 0.06),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .help("More lengths, a custom time, or turn off")
+        }
+    }
+
+    private func isSelected(_ preset: AwakePreset) -> Bool {
+        guard let seconds = preset.seconds else { return model.mode == .indefinite }
+        return isPreset(seconds)
+    }
+
+    private var isTimedOrForever: Bool {
+        switch model.mode {
+        case .until, .indefinite: true
+        default: false
         }
     }
 
@@ -338,6 +426,7 @@ struct AwakeControls: View {
 
     private var isCustom: Bool {
         guard model.timedPreset != nil else { return false }
+        if compact { return !model.menuPresets.contains { isSelected($0) } }
         return !Self.presets.contains { isPreset($0.1) }
     }
 
@@ -368,13 +457,36 @@ struct LidSessionCard: View {
             if model.lidIntent.enabled {
                 HStack(spacing: 10) {
                     IconBadge(icon: "laptopcomputer", tint: Brand.teal)
-                    Text(endsText).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let end = model.lidIntent.expires {
+                            TimelineView(.periodic(from: .now, by: 30)) { context in
+                                Text("\(Format.duration(max(0, end.timeIntervalSince(context.date)))) left at most")
+                                    .font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                            }
+                        }
+                        Text(endsText).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let running = model.lidWatchdogRunning {
+                            Label(running ? "Watchdog running" : "Watchdog stopped: sleep won't come back by itself",
+                                  systemImage: running ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(running ? Brand.teal : Brand.live)
+                        }
+                    }
                 }
-                Button { model.endLidSession(reason: "you ended it") } label: {
-                    Label("End lid session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity)
+                if model.lidEnding {
+                    // The watchdog had its chance; this asks for the password instead.
+                    Button { model.restoreSleepNow() } label: {
+                        Label("Ending… turn sleep on now", systemImage: "moon.zzz.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Sleep should come back within 30 seconds. If it doesn't, this turns it on with your password.")
+                } else {
+                    Button { model.endLidSession(reason: "you ended it") } label: {
+                        Label("End lid session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent).tint(Brand.live)
                 }
-                .buttonStyle(.borderedProminent).tint(.orange)
             } else {
                 HStack(spacing: 10) {
                     IconBadge(icon: "laptopcomputer", tint: Brand.teal)

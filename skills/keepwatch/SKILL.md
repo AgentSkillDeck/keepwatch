@@ -50,7 +50,7 @@ Before starting long work on battery, check `power.batteryPercent` and `power.on
 
 ```sh
 keepwatch ports --json           # your processes on TCP ports ("what's on :3000?")
-keepwatch agents --json          # agent sessions: agent, pid, folder, started, activity (working|idle)
+keepwatch agents --json          # agent sessions: agent, pid, folder, started, activity (working|idle), title (Claude Code session name, when known)
 keepwatch privacy --json         # mic and camera now, plus recent on/off history
 keepwatch security --json        # firewall, FileVault, Gatekeeper, SIP, AirDrop: state and ok
 keepwatch apps --json            # the user's apps by memory (bytes, processes); read-only

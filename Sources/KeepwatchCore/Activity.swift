@@ -136,6 +136,20 @@ public struct PrivacyLog: Equatable, Codable, Sendable {
     /// Newest first.
     public var recent: [PrivacyEvent] { events.reversed() }
 
+    /// Number of pages of `size` events, at least 1.
+    public func pageCount(size: Int) -> Int {
+        guard size > 0 else { return 1 }
+        return max(1, (events.count + size - 1) / size)
+    }
+
+    /// Page `index` (0 = newest) of the newest-first history. Out-of-range
+    /// indexes clamp to the nearest page, so a shrinking log never crashes.
+    public func page(_ index: Int, size: Int) -> [PrivacyEvent] {
+        guard size > 0, !events.isEmpty else { return [] }
+        let page = min(max(0, index), pageCount(size: size) - 1)
+        return Array(recent.dropFirst(page * size).prefix(size))
+    }
+
     public mutating func clear() { events = [] }
 
     public static let defaultURL: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)

@@ -40,7 +40,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 - **Screenshot (⌃⌥⌘S, or the menu button)** opens Apple's screenshot toolbar: an area, a window or the whole screen, as a picture or a video, with Markup to edit it. Apple's app does the capture, so Keepwatch needs no Screen Recording permission.
 
 **Agents**
-- An **Agents** tab lists every session, grouped by assistant (Claude Code, Codex, Gemini CLI…), with its folder, when it started, and whether it is **working** or **idle** right now.
+- An **Agents** tab lists every session, grouped by assistant (Claude Code, Codex, Gemini CLI…), with its name (Claude Code sessions), folder, when it started, and whether it is **working** or **idle** right now.
 - **Stop** one session or all sessions of an assistant, after a confirmation. Keepwatch checks the process is still that agent before it signals it.
 - A notification when an agent **goes quiet** after working: it may be done, or waiting for your answer.
 
@@ -71,6 +71,12 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 - One-click links to the System Settings privacy lists: Camera, Microphone, Screen Recording, Accessibility, Full Disk Access, Automation, Location.
 - Keepwatch needs **no** mic, camera, Full Disk Access or Accessibility permission. It never captures anything; it only asks the system whether a device is running.
 
+**Menu and updates**
+- The menu shows the keep-awake lengths you choose (Settings › Buttons in the menu); the rest are under **⋯**, with a custom time and Turn off.
+- **Refresh** (⌘R) reads everything again now. Dashboard, Screenshot and the website link close the menu first.
+- Lid sessions show the time left and whether the watchdog is running. If the watchdog stops while sleep is off, or doesn't answer **End lid session**, Keepwatch asks for your password and turns sleep back on itself.
+- **Check for updates** in Settings, and an optional daily check (off by default). It only opens the release page; it never installs anything.
+
 **Dashboard**
 - A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security. Six to a row.
 - Tabs: Awake, Agents, Lid closed, Privacy, Security, Battery, Apps, Settings (⌘1–⌘8).
@@ -90,7 +96,7 @@ keepwatch run -- npm test          # stay awake exactly while a command runs (ex
 keepwatch awake --agents           # stay awake while Claude Code, Codex, … run
 keepwatch awake --for 3h           # 45m, 1h30m, 2d, 1w… (max 30 days); or --until 18:30, or --off
 keepwatch status --json            # power, sleep blockers, agents, mic/camera, lid
-keepwatch agents [--json]          # each session: agent, pid, folder, working or idle
+keepwatch agents [--json]          # each session: agent, pid, folder, working or idle, and its name
 keepwatch agents stop PID          # quit one agent session
 keepwatch privacy [--json]         # mic and camera now, plus history
 keepwatch security [--json]        # firewall, FileVault, Gatekeeper, SIP, AirDrop

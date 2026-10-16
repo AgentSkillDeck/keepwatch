@@ -13,6 +13,9 @@ public enum DemoData {
         ]
     }
 
+    /// Session names, as Claude Code titles them.
+    public static let titles: [Int32: String] = [41_201: "Fix the checkout redirect", 41_377: "Add rate limits to the API"]
+
     /// Session pid → working or idle; one is idle so both states show.
     public static let activity: [Int32: AgentActivity] = [41_201: .working, 41_377: .idle, 42_010: .working, 42_455: .working]
 

@@ -21,12 +21,13 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 
 - capture audio or video (it only asks the system whether the mic or camera is running);
 - read or write the TCC privacy database, or ask for Full Disk Access or Accessibility;
-- make network requests;
+- make network requests, except the opt-in update check: with **Check for updates** (or the daily switch, off by default) it sends one GET to `api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest` with no cookies, reads the version number and release page, and never downloads or installs anything ([#4](https://github.com/AgentSkillDeck/keepwatch/issues/4));
 - stop macOS's own processes. In the app, Stop always asks first. `keepwatch agents stop PID` stops only a process that is an agent session (Claude Code, Codex…) of your own user, and re-checks that just before signalling it.
 
 ## Other things it changes, only when you ask
 
 - **Reset camera access** runs Apple's `tccutil reset Camera` after a confirmation, so every app must ask again. It never reads or edits the privacy database itself.
+- **Session names** in the Agents tab come from the end of Claude Code's own transcript for that session (`~/.claude/projects/…/<session>.jsonl`, at most the last 512 KB). Keepwatch reads only the title, keeps it in memory for the current run, and shows a name only when it can tell which transcript belongs to which session.
 - The mic and camera history is a small JSON file in `~/Library/Application Support/Keepwatch/`, capped at 500 entries, never sent anywhere. **Clear** in the Privacy tab deletes it.
 
 A report that any of these guarantees can be broken is in scope.

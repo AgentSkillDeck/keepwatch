@@ -22,6 +22,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var agents: [String: Int] = [:]
     @Published private(set) var agentSessions: [AgentSession] = []
     @Published private(set) var agentActivity: [Int32: AgentActivity] = [:]
+    /// Session names by pid (Claude Code only), refreshed every few seconds.
+    @Published private(set) var sessionTitles: [Int32: String] = [:]
     @Published private(set) var load = SystemLoad(cpuPercent: nil, memoryPercent: nil)
     @Published private(set) var privacyLog = PrivacyLog.load()
     @Published private(set) var batteryHistory = BatteryHistory.load()
@@ -69,6 +71,14 @@ final class AppModel: ObservableObject {
     @Published var hotkeyEnabled: Bool { didSet { defaults.set(hotkeyEnabled, forKey: "hotkey"); Hotkey.shared.setEnabled(hotkeyEnabled) } }
     /// Notify when the mic or camera turns on.
     @Published var alertOnMicCamera: Bool { didSet { defaults.set(alertOnMicCamera, forKey: "alertMicCamera") } }
+    /// The keep-awake buttons shown in the menu (the rest are under "More").
+    @Published var menuPresets: [AwakePreset] {
+        didSet { defaults.set(menuPresets.map(\.rawValue), forKey: "menuPresets") }
+    }
+    /// Opt-in: check GitHub for a newer version once a day (issue #4).
+    @Published var autoCheckUpdates: Bool { didSet { defaults.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
+    @Published private(set) var availableUpdate: UpdateCheck.Release?
+    @Published private(set) var updateStatus: String?
     @Published var customAmount: Double { didSet { defaults.set(customAmount, forKey: "customAmount") } }
     @Published var customUnit: AwakeDuration.Unit { didSet { defaults.set(customUnit.rawValue, forKey: "customUnit") } }
 
@@ -122,6 +132,8 @@ final class AppModel: ObservableObject {
             .flatMap { $0 == "micCamera" ? ["mic", "camera"] : [$0] }
             .compactMap(SummaryTile.init(rawValue:))
         summaryTiles = savedTiles.isEmpty ? SummaryTile.defaults : Array(savedTiles.prefix(SummaryTile.maxShown))
+        menuPresets = AwakePreset.menuSelection(from: defaults.stringArray(forKey: "menuPresets"))
+        autoCheckUpdates = defaults.bool(forKey: "autoCheckUpdates")
         customAmount = defaults.object(forKey: "customAmount") as? Double ?? 2
         customUnit = (defaults.string(forKey: "customUnit")).flatMap(AwakeDuration.Unit.init(rawValue:)) ?? .hours
         lidIntent = (defaults.data(forKey: "lidIntent")).flatMap { try? JSONDecoder().decode(LidModeIntent.self, from: $0) } ?? .off
@@ -227,7 +239,23 @@ final class AppModel: ObservableObject {
         superviseLidSession(now: now)
     }
 
+    private func refreshSessionTitles() {
+        guard !demo else { return }
+        let sessions = agentSessions
+        Task.detached(priority: .utility) { [weak self] in
+            let titles = SessionTitles.titles(for: sessions)
+            await self?.setSessionTitles(titles)
+        }
+    }
+
+    private func setSessionTitles(_ titles: [Int32: String]) { if !demo, titles != sessionTitles { sessionTitles = titles } }
+
     private func refreshSlow() {
+        refreshSessionTitles()
+        if autoCheckUpdates, !demo,
+           UpdateCheck.isDue(lastCheck: defaults.object(forKey: "lastUpdateCheck") as? Date, now: Date()) {
+            checkForUpdates(userAsked: false)
+        }
         let p = SystemState.power()
         if p != power { power = p }
         if batteryHistory.record(health: p.healthPercent, cycles: p.cycleCount, on: Date()) { batteryHistory.save() }
@@ -429,9 +457,16 @@ final class AppModel: ObservableObject {
 
     /// Ask the watchdog to restore sleep. No password needed.
     func endLidSession(reason: String) {
+        // Only the watchdog reads the stop file. If it is gone, the stop file
+        // would do nothing, so turn sleep back on directly (password prompt).
+        guard watchdogAlive() else { restoreSleepNow(); return }
         FileManager.default.createFile(atPath: stopFile.path, contents: Data(reason.utf8))
+        lidStopRequestedAt = Date()
         notify("Lid session ending", "Sleep turns back on within 30 seconds (\(reason)).")
     }
+
+    /// True after End was pressed and before sleep is back on.
+    var lidEnding: Bool { lidStopRequestedAt != nil }
 
     /// For a setting Keepwatch didn't make, or one left over after a reboot.
     func restoreSleepNow() {
@@ -461,10 +496,15 @@ final class AppModel: ObservableObject {
 
     /// Agents seen during the current lid session, and when last seen.
     private var lidAgentLastSeen: Date?
+    @Published private(set) var lidStopRequestedAt: Date?
+    /// Whether the session's watchdog was running at the last check (nil: no session).
+    @Published private(set) var lidWatchdogRunning: Bool?
+    private var lidRescuePrompted = false
     private static let lidAgentGrace: TimeInterval = 120
 
     private func superviseLidSession(now: Date) {
         guard lidIntent.enabled, !lidBusy else { lidAgentLastSeen = nil; return }
+        rescueLidSessionIfStuck(now: now)
         if !agents.isEmpty { lidAgentLastSeen = now }
         if endLidSessionWhenAgentsFinish, agents.isEmpty, let seen = lidAgentLastSeen,
            now.timeIntervalSince(seen) >= Self.lidAgentGrace, !FileManager.default.fileExists(atPath: stopFile.path) {
@@ -484,6 +524,24 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// If the watchdog is gone or not answering while sleep is still off, the
+    /// Mac would never sleep again. Ask for the password once to fix it, and
+    /// leave a banner in case the prompt is dismissed.
+    private func rescueLidSessionIfStuck(now: Date) {
+        guard tickCount % 5 == 0, let pm = pmset else { return }
+        let alive = watchdogAlive()
+        if alive != lidWatchdogRunning { lidWatchdogRunning = alive }
+        guard !lidRescuePrompted else { return }
+        let action = LidModeGuard.supervise(intent: lidIntent, systemSleepDisabled: pm.sleepDisabled,
+                                            watchdogAlive: alive, stopRequestedAt: lidStopRequestedAt, now: now)
+        guard case .restore = action else { return }
+        lidRescuePrompted = true
+        banner = Banner(text: "Sleep is still off, but the lid session stopped working. Turn sleep back on.",
+                        action: .restoreSleep)
+        notify("Your Mac can't sleep", "The lid session stopped working. Type your password to turn sleep back on.")
+        restoreSleepNow()
+    }
+
     private func watchdogAlive() -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
@@ -497,6 +555,7 @@ final class AppModel: ObservableObject {
 
     private func saveIntent(_ intent: LidModeIntent) {
         lidIntent = intent
+        if !intent.enabled { lidStopRequestedAt = nil; lidRescuePrompted = false; lidWatchdogRunning = nil }
         if let data = try? JSONEncoder().encode(intent) { defaults.set(data, forKey: "lidIntent") }
     }
 
@@ -523,6 +582,15 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Ports
+
+    /// Reads everything again now, for the refresh button.
+    func refreshNow() {
+        refreshSlow()
+        tick()
+        refreshSecurity()
+        refreshPorts()
+        refreshTopApps()
+    }
 
     func refreshPorts() { if !demo { ports = ListeningPorts.current() } }
 
@@ -558,6 +626,7 @@ final class AppModel: ObservableObject {
         agentSessions = DemoData.agentSessions(now: now)
         agents = Dictionary(grouping: agentSessions, by: \.agent).mapValues(\.count)
         agentActivity = DemoData.activity
+        sessionTitles = DemoData.titles
         privacy = DemoData.privacy
         privacyLog = DemoData.privacyLog(now: now)
         power = DemoData.power
@@ -638,6 +707,45 @@ final class AppModel: ObservableObject {
         openDashboardAction?()
         NSApp.activate(ignoringOtherApps: true)
     }
+
+    func showDashboard(tab: DashboardTab) {
+        UserDefaults.standard.set(tab.rawValue, forKey: "dashboardTab")
+        showDashboard()
+    }
+
+    static var currentVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    /// One request to GitHub's latest-release API; never downloads anything.
+    func checkForUpdates(userAsked: Bool) {
+        defaults.set(Date(), forKey: "lastUpdateCheck")
+        if userAsked { updateStatus = "Checking…" }
+        Task { @MainActor in
+            guard let latest = await UpdateCheck.fetchLatest() else {
+                if userAsked { updateStatus = "Couldn't reach GitHub. Try again later." }
+                return
+            }
+            if UpdateCheck.isNewer(latest.version, than: Self.currentVersion) {
+                let isNew = availableUpdate != latest
+                availableUpdate = latest
+                updateStatus = "Keepwatch \(latest.version) is available."
+                if isNew || userAsked {
+                    notify("Keepwatch \(latest.version) is available", "Open Keepwatch › Settings to download it.")
+                }
+            } else {
+                availableUpdate = nil
+                updateStatus = userAsked ? "You have the latest version (\(Self.currentVersion))." : nil
+            }
+        }
+    }
+
+    func keepAwake(_ preset: AwakePreset) {
+        if let seconds = preset.seconds { keepAwake(for: seconds) } else { setMode(.indefinite) }
+    }
+
+    static let websiteURL = URL(string: "https://agentskilldeck.github.io/keepwatch/")
+    static let sourceURL = URL(string: "https://github.com/AgentSkillDeck/keepwatch")
 
     // MARK: URL commands
 

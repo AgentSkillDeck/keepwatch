@@ -65,6 +65,7 @@ public enum LidModeAction: Equatable, Sendable {
         case thermal = "Mac is running hot"
         case quitting = "Keepwatch is quitting"
         case staleAfterLaunch = "left on from a previous run"
+        case watchdogStopped = "the lid-session watchdog stopped"
     }
 }
 
@@ -101,6 +102,30 @@ public enum LidModeGuard {
         if thermal >= policy.maxThermal { return .restore(.thermal) }
         if onBattery, policy.requireExternalPower { return .restore(.onBattery) }
         if onBattery, let pct = batteryPercent, pct <= policy.minBatteryPercent { return .restore(.lowBattery) }
+        return .none
+    }
+
+    /// The watchdog gets this long to appear after a session starts.
+    public static let watchdogStartGrace: TimeInterval = 60
+    /// The watchdog polls every 30 s, so a stop request or a passed deadline it
+    /// hasn't acted on after this long means it isn't running properly.
+    public static let watchdogAnswerTimeout: TimeInterval = 90
+
+    /// Checked every few seconds while a session runs. Only the watchdog turns
+    /// sleep back on without a password, so if it is gone, or ignores a stop
+    /// request or its deadline, the app must restore sleep itself (with a
+    /// password). Without this, a killed watchdog leaves the Mac sleepless.
+    public static func supervise(intent: LidModeIntent, systemSleepDisabled: Bool, watchdogAlive: Bool,
+                                 stopRequestedAt: Date?, now: Date) -> LidModeAction {
+        guard intent.enabled, systemSleepDisabled else { return .none }
+        if let since = intent.since, now.timeIntervalSince(since) < watchdogStartGrace { return .none }
+        if !watchdogAlive { return .restore(.watchdogStopped) }
+        if let asked = stopRequestedAt, now.timeIntervalSince(asked) >= watchdogAnswerTimeout {
+            return .restore(.watchdogStopped)
+        }
+        if let expires = intent.expires, now.timeIntervalSince(expires) >= watchdogAnswerTimeout {
+            return .restore(.watchdogStopped)
+        }
         return .none
     }
 

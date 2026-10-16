@@ -56,6 +56,30 @@ struct DashboardView: View {
         .onAppear { model.refreshSecurity(); model.refreshPorts() }
     }
 
+    @AppStorage("privacySub") private var privacySub = "Now"
+    @AppStorage("appsSub") private var appsSub = "Memory"
+
+    private var permissionsGrid: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Eyebrow(text: "App permissions")
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
+                ForEach(PrivacyPane.allCases, id: \.self) { pane in
+                    Button { model.open(pane) } label: {
+                        VStack(spacing: 5) {
+                            Image(systemName: pane.icon).font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(Brand.teal)
+                            Text(pane.shortTitle).font(.system(size: 11, weight: .medium))
+                                .lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .padding(.vertical, 6)
+                    }
+                    .buttonStyle(TileButtonStyle(selected: false))
+                    .help("Open \(pane.title) in System Settings")
+                }
+            }
+        }
+    }
+
     @ViewBuilder private func section(_ tab: DashboardTab) -> some View {
         switch tab {
         case .awake:
@@ -86,26 +110,15 @@ struct DashboardView: View {
         case .lid:
             Card("Lid-closed sessions", icon: "laptopcomputer") { LidSessionCard(compact: false) }
         case .privacy:
-            Card("Privacy", icon: "hand.raised.fill") {
-                PrivacySwitches(compact: false)
-                CameraResetRow()
-                Divider()
-                PrivacyHistory()
-                Divider()
-                Eyebrow(text: "App permissions")
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 4), spacing: 8) {
-                    ForEach(PrivacyPane.allCases, id: \.self) { pane in
-                        Button { model.open(pane) } label: {
-                            VStack(spacing: 5) {
-                                Image(systemName: pane.icon).font(.system(size: 15, weight: .semibold))
-                                    .foregroundStyle(Brand.teal)
-                                Text(pane.shortTitle).font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1).minimumScaleFactor(0.8)
-                            }
-                            .padding(.vertical, 6)
-                        }
-                        .buttonStyle(TileButtonStyle(selected: false))
-                        .help("Open \(pane.title) in System Settings")
+            VStack(alignment: .leading, spacing: 12) {
+                SubTabs(selection: $privacySub, options: ["Now", "History", "Permissions"])
+                Card("Privacy", icon: "hand.raised.fill") {
+                    switch privacySub {
+                    case "History": PrivacyHistory()
+                    case "Permissions": permissionsGrid
+                    default:
+                        PrivacySwitches(compact: false)
+                        CameraResetRow()
                     }
                 }
             }
@@ -117,11 +130,17 @@ struct DashboardView: View {
                 Card("Battery health over time", icon: "chart.line.downtrend.xyaxis") { BatteryHistoryView() }
             }
         case .ports:
-            VStack(spacing: 16) {
-                Card("Using the most memory", icon: "memorychip") { TopAppsList() }
-                Card("Listening ports", icon: "network") { PortsList() }
+            VStack(alignment: .leading, spacing: 12) {
+                SubTabs(selection: $appsSub, options: ["Memory", "Ports"])
+                if appsSub == "Ports" {
+                    Card("Listening ports", icon: "network") { PortsList() }
+                } else {
+                    Card("Using the most memory", icon: "memorychip") { TopAppsList() }
+                }
             }
         case .settings:
+            AboutCard()
+            MenuButtonsCard()
             Card("Settings", icon: "slider.horizontal.3") {
                 ForEach(QuickToggle.allCases) { t in
                     SwitchRow(icon: t.icon, title: t.title,
@@ -525,7 +544,15 @@ struct AgentSessionsList: View {
                         HStack(spacing: 10) {
                             Image(systemName: "folder.fill").foregroundStyle(Brand.teal).frame(width: 28)
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(session.folderName ?? "Unknown folder").font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text(model.sessionTitles[session.pid] ?? session.folderName ?? "Unknown folder")
+                                        .font(.system(size: 13, weight: .medium)).lineLimit(1)
+                                    if model.sessionTitles[session.pid] != nil, let folder = session.folderName {
+                                        Text(folder).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .background(Color.primary.opacity(0.07), in: Capsule())
+                                    }
+                                }
                                 Text(detail(session)).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer(minLength: 8)
@@ -586,6 +613,8 @@ struct ActivityPill: View {
 /// When the mic and camera turned on and off. Kept on this Mac only.
 struct PrivacyHistory: View {
     @EnvironmentObject var model: AppModel
+    @State private var page = 0
+    static let pageSize = 12
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -599,7 +628,7 @@ struct PrivacyHistory: View {
             if model.privacyLog.events.isEmpty {
                 Text("Nothing yet. Mic and camera use will show here.").font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(model.privacyLog.recent.prefix(12)) { e in
+            ForEach(model.privacyLog.page(page, size: Self.pageSize)) { e in
                 HStack(spacing: 8) {
                     Image(systemName: e.device == .mic ? (e.on ? "mic.fill" : "mic.slash") : (e.on ? "video.fill" : "video.slash"))
                         .foregroundStyle(e.on ? Brand.live : Color.secondary)
@@ -608,6 +637,21 @@ struct PrivacyHistory: View {
                     Spacer()
                     Text(e.date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(.secondary)
                 }
+            }
+            let pages = model.privacyLog.pageCount(size: Self.pageSize)
+            if pages > 1 {
+                let shown = min(page, pages - 1)
+                HStack {
+                    Button { page = max(0, shown - 1) } label: { Label("Newer", systemImage: "chevron.left") }
+                        .disabled(shown == 0)
+                    Spacer()
+                    Text("Page \(shown + 1) of \(pages) · \(model.privacyLog.events.count) events (keeps the last \(PrivacyLog.maxEvents))")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button { page = min(pages - 1, shown + 1) } label: { Label("Older", systemImage: "chevron.right") }
+                        .disabled(shown >= pages - 1)
+                }
+                .buttonStyle(.borderless).font(.caption)
             }
         }
     }
@@ -707,6 +751,72 @@ struct BatteryHistoryView: View {
                 Text("\(last.healthPercent)% now" + (model.batteryHistory.change.map { ", \($0 >= 0 ? "+" : "")\($0) points since \(first.day)" } ?? ""))
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+/// Which keep-awake lengths get a button in the menu.
+struct MenuButtonsCard: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        Card("Buttons in the menu", icon: "rectangle.grid.1x2") {
+            Text("Pick up to \(AwakePreset.menuMax). The rest are under ⋯ in the menu.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(AwakePreset.allCases) { preset in
+                    let on = model.menuPresets.contains(preset)
+                    Button { model.menuPresets = AwakePreset.toggle(preset, in: model.menuPresets) } label: {
+                        Text(preset.label).font(.system(size: 12, weight: .semibold, design: .rounded))
+                    }
+                    .buttonStyle(TileButtonStyle(selected: on, height: 30))
+                    .disabled(!on && model.menuPresets.count >= AwakePreset.menuMax)
+                }
+            }
+        }
+    }
+}
+
+/// A row of sub-sections inside a tab, so nothing hides below the fold.
+struct SubTabs: View {
+    @Binding var selection: String
+    let options: [String]
+
+    var body: some View {
+        Picker("Section", selection: $selection) {
+            ForEach(options, id: \.self) { Text($0).tag($0) }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 360)
+    }
+}
+
+/// Version, links and the opt-in update check.
+struct AboutCard: View {
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        Card("Keepwatch \(AppModel.currentVersion)", icon: "info.circle") {
+            HStack(spacing: 8) {
+                if let page = model.availableUpdate?.page {
+                    Button { NSWorkspace.shared.open(page) } label: {
+                        Label("Download \(model.availableUpdate?.version ?? "")", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent).tint(Brand.teal)
+                }
+                Button("Check for updates") { model.checkForUpdates(userAsked: true) }
+                Spacer()
+                Button { if let u = AppModel.websiteURL { NSWorkspace.shared.open(u) } } label: { Label("Website", systemImage: "globe") }
+                Button { if let u = AppModel.sourceURL { NSWorkspace.shared.open(u) } } label: { Label("Source", systemImage: "chevron.left.forwardslash.chevron.right") }
+            }
+            .controlSize(.small)
+            if let status = model.updateStatus {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+            }
+            SwitchRow(icon: "arrow.triangle.2.circlepath", title: "Check for updates once a day",
+                      subtitle: "Off by default. Asks GitHub for the latest version number; nothing else is sent.",
+                      isOn: $model.autoCheckUpdates)
         }
     }
 }
