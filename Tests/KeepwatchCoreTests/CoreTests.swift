@@ -853,3 +853,16 @@ final class StayActiveTests: XCTestCase {
         XCTAssertNotNil(StayActive.idleSeconds())
     }
 }
+
+final class VersionSyncTests: XCTestCase {
+    /// The CLI prints its own version (Homebrew's test checks it); it must match the app's.
+    func testCLIVersionMatchesInfoPlist() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let plist = try XCTUnwrap(NSDictionary(contentsOf: root.appendingPathComponent("Resources/Info.plist")))
+        let app = try XCTUnwrap(plist["CFBundleShortVersionString"] as? String)
+        let main = try String(contentsOf: root.appendingPathComponent("Sources/KeepwatchCLI/main.swift"), encoding: .utf8)
+        XCTAssertTrue(main.contains("let version = \"\(app)\""), "Sources/KeepwatchCLI/main.swift version must be \(app)")
+        let formula = try String(contentsOf: root.appendingPathComponent("packaging/homebrew/keepwatch-cli.rb"), encoding: .utf8)
+        XCTAssertTrue(formula.contains("v\(app)/keepwatch-cli-\(app)-macos.zip"), "Homebrew formula URL must be \(app)")
+    }
+}

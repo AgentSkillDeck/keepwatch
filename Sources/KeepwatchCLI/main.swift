@@ -4,7 +4,7 @@ import KeepwatchCore
 
 // `keepwatch`: the command line for people and AI agents. See CLICommand.usage.
 
-let version = "0.2.0"
+let version = "0.3.0"
 let appBundleID = "app.keepwatch.Keepwatch"
 
 func out(_ s: String) { FileHandle.standardOutput.write(Data((s + "\n").utf8)) }

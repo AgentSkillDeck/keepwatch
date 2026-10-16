@@ -8,7 +8,7 @@ class KeepwatchCli < Formula
   homepage "https://github.com/AgentSkillDeck/keepwatch"
   # Homebrew reads the version from the URL. Set both numbers at release time:
   # .../releases/download/vVERSION/keepwatch-cli-VERSION-macos.zip
-  url "https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.2.0/keepwatch-cli-0.2.0-macos.zip"
+  url "https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.3.0/keepwatch-cli-0.3.0-macos.zip"
   # FILL IN AT RELEASE TIME: shasum -a 256 dist/keepwatch-cli-<version>-macos.zip
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
   license "Apache-2.0"
