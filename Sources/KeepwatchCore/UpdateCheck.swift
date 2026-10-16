@@ -1,7 +1,8 @@
 import Foundation
 
-/// The opt-in update check: Keepwatch's only network request.
-/// One GET to GitHub's "latest release" API; it never downloads or installs.
+/// The opt-in update check: one GET to GitHub's "latest release" API. It
+/// never downloads anything by itself; `UpdateInstaller` does that, and only
+/// when the user clicks Install.
 public enum UpdateCheck {
     public static let latestReleaseURL = URL(string: "https://api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest")
     /// Responses larger than this are ignored.
@@ -12,6 +13,24 @@ public enum UpdateCheck {
     public struct Release: Equatable, Sendable {
         public var version: String
         public var page: URL
+        /// `Keepwatch-<version>.zip` and `SHA256SUMS.txt` from this repo's
+        /// release; nil if the release doesn't have them.
+        public var appZip: URL?
+        public var checksums: URL?
+
+        public init(version: String, page: URL, appZip: URL? = nil, checksums: URL? = nil) {
+            self.version = version
+            self.page = page
+            self.appZip = appZip
+            self.checksums = checksums
+        }
+    }
+
+    /// Release downloads must come from this repo's releases on github.com.
+    static func isReleaseAsset(_ url: URL, version: String) -> Bool {
+        url.scheme == "https" && url.host == "github.com"
+            && url.path.hasPrefix("/AgentSkillDeck/keepwatch/releases/download/v\(version)/")
+            && !url.path.contains("..")
     }
 
     /// Reads `tag_name` and `html_url` from the API's JSON. The page must be on
@@ -23,7 +42,14 @@ public enum UpdateCheck {
               let html = object["html_url"] as? String, let page = URL(string: html),
               page.scheme == "https", page.host == "github.com",
               let version = normalized(tag) else { return nil }
-        return Release(version: version, page: page)
+        var release = Release(version: version, page: page)
+        for asset in (object["assets"] as? [[String: Any]] ?? []).prefix(50) {
+            guard let name = asset["name"] as? String, let link = asset["browser_download_url"] as? String,
+                  let url = URL(string: link), isReleaseAsset(url, version: version) else { continue }
+            if name == "Keepwatch-\(version).zip" { release.appZip = url }
+            if name == "SHA256SUMS.txt" { release.checksums = url }
+        }
+        return release
     }
 
     /// "v0.3.0" → "0.3.0"; nil unless it is one to four dot-separated numbers.

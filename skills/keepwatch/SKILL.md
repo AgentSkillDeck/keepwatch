@@ -31,7 +31,7 @@ export PATH="$HOME/.local/bin:$PATH"   # tell the user to add this line to ~/.zs
 keepwatch version
 ```
 
-Once the Homebrew tap exists, `brew install agentskilldeck/tap/keepwatch-cli` also works. Check first with `brew info agentskilldeck/tap/keepwatch-cli`, and use the zip if that fails.
+Or in one line (no sudo; it checks the checksum and signature): `curl -fsSL https://raw.githubusercontent.com/AgentSkillDeck/keepwatch/main/scripts/install-cli.sh | sh`. Homebrew: `brew install agentskilldeck/tap/keepwatch-cli`; if `brew info agentskilldeck/tap/keepwatch-cli` fails, use the zip or the script.
 
 Never use `sudo`. Without the app, everything works except `keepwatch lid start`, which exits with status 2 and says where to get the app.
 

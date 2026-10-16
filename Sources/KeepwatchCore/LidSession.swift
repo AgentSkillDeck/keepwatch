@@ -5,8 +5,8 @@ import Foundation
 ///
 /// Turning sleep off needs root, and once the lid is closed nobody can type a
 /// password to turn it back on. So starting a session runs ONE admin command
-/// that disables sleep and launches a small root watchdog (a fixed shell loop
-/// built here). The watchdog alone decides when to restore sleep, so the Mac
+/// that disables sleep and submits a small root watchdog (a fixed shell loop
+/// built here) as a launchd job. The watchdog alone decides when to restore sleep, so the Mac
 /// goes back to sleep on schedule even if Keepwatch crashes or is quit.
 public struct LidSessionPlan: Equatable, Codable, Sendable {
     /// Restore sleep this long after the lid closes (accumulates only while
@@ -83,11 +83,16 @@ public enum LidWatchdog {
     struct Tools {
         var pmset = "/usr/bin/pmset"
         var ioreg = "/usr/sbin/ioreg"
+        var launchctl = "/bin/launchctl"
+        var label = LidWatchdog.label
         var interval = 30
         /// Floor for the lid-closed limit; tests lower it to run in seconds.
         var minLidSeconds = 60
         static let system = Tools()
     }
+
+    /// The launchd job the watchdog runs as.
+    public static let label = "app.keepwatch.lid-watchdog"
 
     static func startCommand(plan: LidSessionPlan, stopFile: String, now: Date, tools: Tools) throws -> String {
         guard stopFile.hasPrefix("/"), !stopFile.contains("'"), !stopFile.contains("\n"),
@@ -98,33 +103,47 @@ public enum LidWatchdog {
         let minBattery = max(0, min(100, plan.minBatteryPercent))
         let allowBattery = plan.allowOnBattery ? 1 : 0
         let sleepAfter = plan.sleepWhenDone ? 1 : 0
+        let lc = tools.launchctl, label = tools.label
 
-        // POSIX sh, run as root by `do shell script ... with administrator privileges`.
-        // Detached with nohup so the admin call returns at once.
+        // POSIX sh. It runs as its own launchd job, not as a child of the
+        // password prompt: launchd keeps it running whatever happens to
+        // Keepwatch or osascript, and the admin call returns at once. (Run as
+        // a background child instead, it kept osascript waiting for the whole
+        // session and died with it.) launchd restarts a submitted job that
+        // exits, so the loop ends by removing its own job, and a restarted
+        // copy exits at once if sleep is already back on. Why it stopped is
+        // appended to "<stop file>.log".
         let loop = """
-        S='\(stopFile)'; END=$(( $(date +%s) + \(deadline) )); LIDMAX=\(lidLimit); CLOSED=0; \
+        S='\(stopFile)'; L='\(stopFile).log'; \
+        \(tools.pmset) -g | /usr/bin/grep -Eq 'SleepDisabled[[:space:]]+1' || { \(lc) remove \(label); exit 0; }; \
+        END=$(( $(/bin/date +%s) + \(deadline) )); LIDMAX=\(lidLimit); CLOSED=0; R=deadline; \
+        echo "$(/bin/date) started" >> "$L"; \
         while :; do \
-        NOW=$(date +%s); [ "$NOW" -ge "$END" ] && break; [ -e "$S" ] && break; \
+        NOW=$(/bin/date +%s); [ "$NOW" -ge "$END" ] && break; [ -e "$S" ] && { R=stop-requested; break; }; \
         B=$(\(tools.pmset) -g batt); \
         if echo "$B" | /usr/bin/grep -q "Battery Power"; then \
-        [ \(allowBattery) -eq 0 ] && break; \
+        [ \(allowBattery) -eq 0 ] && { R=on-battery; break; }; \
         P=$(echo "$B" | /usr/bin/grep -Eo '[0-9]+%' | /usr/bin/head -1 | /usr/bin/tr -d '%'); \
-        [ -n "$P" ] && [ "$P" -le \(minBattery) ] && break; fi; \
+        [ -n "$P" ] && [ "$P" -le \(minBattery) ] && { R=low-battery; break; }; fi; \
         if [ "$LIDMAX" -gt 0 ]; then \
         if \(tools.ioreg) -r -k AppleClamshellState -d 1 | /usr/bin/grep -q '"AppleClamshellState" = Yes'; \
         then CLOSED=$((CLOSED + \(tools.interval))); else CLOSED=0; fi; \
-        [ "$CLOSED" -ge "$LIDMAX" ] && break; fi; \
-        sleep \(tools.interval); done; \
-        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; \
+        [ "$CLOSED" -ge "$LIDMAX" ] && { R=lid-closed-limit; break; }; fi; \
+        /bin/sleep \(tools.interval); done; \
+        \(tools.pmset) -a disablesleep 0; /bin/rm -f "$S"; echo "$(/bin/date) ended: $R" >> "$L"; \
         if [ \(sleepAfter) -eq 1 ] && \(tools.ioreg) -r -k AppleClamshellState -d 1 | /usr/bin/grep -q '"AppleClamshellState" = Yes'; \
-        then \(tools.pmset) sleepnow; fi
+        then \(tools.pmset) sleepnow; fi; \
+        \(lc) remove \(label)
         """
         let escaped = loop.replacingOccurrences(of: "'", with: #"'\''"#)
-        return "/bin/rm -f '\(stopFile)'; \(tools.pmset) -a disablesleep 1 && " +
-            "/usr/bin/nohup /bin/sh -c '\(escaped)' >/dev/null 2>&1 &"
+        return "/bin/rm -f '\(stopFile)'; \(lc) remove \(label) >/dev/null 2>&1; " +
+            "\(tools.pmset) -a disablesleep 1 >/dev/null 2>&1 || exit 1; " +
+            "\(lc) submit -l \(label) -- /bin/sh -c '\(escaped)'"
     }
 
     /// The command to end a session right now (also needs admin). Normally
     /// Keepwatch just creates the stop file and lets the watchdog do this.
-    public static func stopNowCommand() -> String { PMSet.disableSleepCommand(false) }
+    public static func stopNowCommand() -> String {
+        PMSet.disableSleepCommand(false) + "; /bin/launchctl remove \(label) >/dev/null 2>&1; true"
+    }
 }

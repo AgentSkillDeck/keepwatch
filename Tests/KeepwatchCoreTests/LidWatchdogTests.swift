@@ -1,12 +1,14 @@
 import XCTest
 @testable import KeepwatchCore
 
-/// Runs the real watchdog shell loop as the current user, with `pmset` and
-/// `ioreg` replaced by stubs that record calls. Nothing touches real settings.
+/// Runs the real watchdog shell loop as the current user, as a launchd job in
+/// the user's own domain, with `pmset` and `ioreg` replaced by stubs that
+/// record calls. Nothing touches real settings.
 final class LidWatchdogTests: XCTestCase {
     var dir: URL!
     var log: URL { dir.appendingPathComponent("calls.log") }
     var stop: URL { dir.appendingPathComponent("lid.stop") }
+    let label = "app.keepwatch.test-watchdog.\(UUID().uuidString)"
 
     override func setUpWithError() throws {
         dir = FileManager.default.temporaryDirectory.appendingPathComponent("kw-\(UUID().uuidString)")
@@ -16,14 +18,33 @@ final class LidWatchdogTests: XCTestCase {
         try "80".write(to: dir.appendingPathComponent("pct"), atomically: true, encoding: .utf8)
         try "Yes".write(to: dir.appendingPathComponent("lid"), atomically: true, encoding: .utf8)
         try stub("pmset", """
-        if [ "$1" = "-g" ]; then echo "Now drawing from '$(cat \(dir.path)/power)'"; \
+        if [ "$1" = "-g" ] && [ "$2" = "batt" ]; then echo "Now drawing from '$(cat \(dir.path)/power)'"; \
         echo " -InternalBattery-0 (id=1)	$(cat \(dir.path)/pct)%; discharging; present: true"; \
-        else echo "$*" >> \(log.path); fi
+        elif [ "$1" = "-g" ]; then printf ' SleepDisabled\\t\\t%s\\n' "$(cat \(dir.path)/disabled 2>/dev/null || echo 0)"; \
+        else echo "$*" >> \(log.path); \
+        [ "$2" = "disablesleep" ] && echo "$3" > \(dir.path)/disabled; fi
         """)
         try stub("ioreg", #"echo "  | \"AppleClamshellState\" = $(cat \#(dir.path)/lid)""#)
     }
 
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+    override func tearDownWithError() throws {
+        _ = run("/bin/launchctl", ["remove", label])
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    @discardableResult
+    func run(_ tool: String, _ args: [String]) -> Int32 {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = args
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        guard (try? p.run()) != nil else { return -1 }
+        p.waitUntilExit()
+        return p.terminationStatus
+    }
+
+    var jobLoaded: Bool { run("/bin/launchctl", ["list", label]) == 0 }
 
     func stub(_ name: String, _ body: String) throws {
         let url = dir.appendingPathComponent(name)
@@ -33,7 +54,7 @@ final class LidWatchdogTests: XCTestCase {
 
     var tools: LidWatchdog.Tools {
         LidWatchdog.Tools(pmset: dir.appendingPathComponent("pmset").path,
-                          ioreg: dir.appendingPathComponent("ioreg").path, interval: 1, minLidSeconds: 1)
+                          ioreg: dir.appendingPathComponent("ioreg").path, label: label, interval: 1, minLidSeconds: 1)
     }
 
     func start(_ plan: LidSessionPlan) throws {
@@ -98,20 +119,57 @@ final class LidWatchdogTests: XCTestCase {
     }
 
     /// The real app wraps the command in AppleScript `do shell script`. Run
-    /// the same escaping through osascript (as the user, not admin) and check
-    /// the watchdog behaves identically and osascript returns immediately.
-    func testAppleScriptEscapingRunsTheSameWatchdog() throws {
-        let cmd = try LidWatchdog.startCommand(plan: LidSessionPlan(afterLidClosed: 2), stopFile: stop.path, now: Date(), tools: tools)
+    /// the same escaping through osascript (as the user, not admin): it must
+    /// return at once while a long session keeps running, and the watchdog
+    /// must not belong to osascript. (The old background-child watchdog kept
+    /// osascript waiting for the whole session; a short session hid that.)
+    func testAppleScriptReturnsAtOnceAndWatchdogOutlivesIt() throws {
+        let cmd = try LidWatchdog.startCommand(plan: LidSessionPlan(afterLidClosed: nil), stopFile: stop.path, now: Date(), tools: tools)
         let script = PMSet.appleScript(for: cmd, prompt: "test \"quoted\" prompt", admin: false)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
         p.arguments = ["-e", script]
+        p.standardOutput = Pipe()
         let started = Date()
         try p.run()
-        p.waitUntilExit()
+        while p.isRunning, Date().timeIntervalSince(started) < 8 { usleep(100_000) }
+        let stillRunning = p.isRunning
+        if stillRunning { p.terminate() }
+        XCTAssertFalse(stillRunning, "osascript must not wait for the watchdog")
         XCTAssertEqual(p.terminationStatus, 0)
-        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "osascript must not wait for the detached watchdog")
+        usleep(2_500_000)
+        XCTAssertTrue(jobLoaded, "watchdog runs as its own launchd job")
+        XCTAssertEqual(calls(waitingFor: "never", timeout: 0.1), ["-a disablesleep 1"], "still supervising")
+        try "x".write(to: stop, atomically: true, encoding: .utf8)
         XCTAssertEqual(calls(waitingFor: "sleepnow"), ["-a disablesleep 1", "-a disablesleep 0", "sleepnow"])
+        let log = (try? String(contentsOf: URL(fileURLWithPath: stop.path + ".log"), encoding: .utf8)) ?? ""
+        XCTAssertTrue(log.contains("ended: stop-requested"), log)
+    }
+
+    /// The loop removes its own job when done, so launchd doesn't restart it.
+    func testJobRemovesItselfWhenDone() throws {
+        try start(LidSessionPlan(afterLidClosed: 2))
+        XCTAssertEqual(calls(waitingFor: "sleepnow"), ["-a disablesleep 1", "-a disablesleep 0", "sleepnow"])
+        let end = Date().addingTimeInterval(5)
+        while jobLoaded, Date() < end { usleep(200_000) }
+        XCTAssertFalse(jobLoaded)
+    }
+
+    /// A copy launchd restarts after sleep is already back on does nothing.
+    func testRestartedCopyExitsWhenSleepIsOn() throws {
+        let cmd = try LidWatchdog.startCommand(plan: LidSessionPlan(afterLidClosed: 2), stopFile: stop.path, now: Date(), tools: tools)
+        // Same job, but without the leading "disablesleep 1": sleep is on.
+        let submit = try XCTUnwrap(cmd.range(of: "/bin/launchctl submit")).lowerBound
+        XCTAssertEqual(run("/bin/sh", ["-c", String(cmd[submit...])]), 0)
+        let end = Date().addingTimeInterval(5)
+        repeat { usleep(300_000) } while jobLoaded && Date() < end
+        XCTAssertFalse(jobLoaded)
+        XCTAssertEqual(calls(waitingFor: "never", timeout: 0.1), [], "never touched sleep")
+    }
+
+    func testStopNowAlsoRemovesTheJob() {
+        XCTAssertTrue(LidWatchdog.stopNowCommand().hasPrefix("/usr/bin/pmset -a disablesleep 0"))
+        XCTAssertTrue(LidWatchdog.stopNowCommand().contains("/bin/launchctl remove \(LidWatchdog.label)"))
     }
 
     func testRejectsUnsafeStopPaths() {
@@ -130,9 +188,10 @@ final class LidWatchdogTests: XCTestCase {
 
     func testRealCommandUsesSystemBinaries() throws {
         let cmd = try LidWatchdog.startCommand(plan: .init(), stopFile: "/tmp/kw.stop", now: Date())
-        XCTAssertTrue(cmd.contains("/usr/bin/pmset -a disablesleep 1 && /usr/bin/nohup /bin/sh -c"))
+        XCTAssertTrue(cmd.contains("/usr/bin/pmset -a disablesleep 1 >/dev/null 2>&1 || exit 1; " +
+                                   "/bin/launchctl submit -l \(LidWatchdog.label) -- /bin/sh -c"))
         XCTAssertTrue(cmd.contains("/usr/sbin/ioreg -r -k AppleClamshellState"))
-        XCTAssertTrue(cmd.contains("sleep 30; done"))
+        XCTAssertTrue(cmd.contains("/bin/sleep 30; done"))
     }
 
     func testNextTime() {

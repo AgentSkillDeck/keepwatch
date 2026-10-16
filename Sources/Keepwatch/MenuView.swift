@@ -152,6 +152,7 @@ struct BannerView: View {
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
                 if banner.action == .restoreSleep { Button("Turn sleep back on") { model.restoreSleepNow() } }
+                if banner.action == .openAccessibility { Button("Open Accessibility") { model.open(.accessibility) } }
                 Button("Dismiss") { model.banner = nil }
             }
             .controlSize(.small)
@@ -271,42 +272,32 @@ struct AwakeControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if compact {
             HStack {
                 Eyebrow(text: "Keep awake")
                 Spacer()
-                if compact && isTimedOrForever {
+                if isTimedOrForever {
                     Button("Turn off") { model.setMode(.off) }
                         .buttonStyle(.borderless).font(.caption.weight(.semibold))
                 }
             }
+            }
             if compact { compactRow } else {
-            Grid(horizontalSpacing: 6, verticalSpacing: 6) {
-                GridRow {
-                    ForEach(Self.presets, id: \.1) { label, seconds in
-                        Button { model.keepAwake(for: seconds) } label: {
-                            Text(label).font(.system(size: 13, weight: .semibold, design: .rounded))
-                        }
-                        .buttonStyle(TileButtonStyle(selected: isPreset(seconds)))
-                    }
+            HStack(spacing: 6) {
+                ForEach(Self.presets, id: \.1) { label, seconds in
+                    Button(label) { model.keepAwake(for: seconds) }
+                        .buttonStyle(ChipButtonStyle(selected: isPreset(seconds)))
                 }
-                GridRow {
-                    Button { model.setMode(.indefinite) } label: {
-                        Image(systemName: "infinity").font(.system(size: 15, weight: .bold))
-                    }
-                    .buttonStyle(TileButtonStyle(selected: model.mode == .indefinite))
+                Button { model.setMode(.indefinite) } label: { Image(systemName: "infinity").font(.system(size: 13, weight: .bold)) }
+                    .buttonStyle(ChipButtonStyle(selected: model.mode == .indefinite))
                     .help("Until you turn it off")
-                    Button { withAnimation(.snappy) { showCustom.toggle() } } label: {
-                        Label("Custom", systemImage: "slider.horizontal.3").font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(TileButtonStyle(selected: showCustom || isCustom))
-                    .gridCellColumns(2)
-                    Button { model.setMode(.off) } label: {
-                        Label("Off", systemImage: "moon.zzz.fill").font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(TileButtonStyle(selected: false))
+                Button { withAnimation(.snappy) { showCustom.toggle() } } label: { Label("Custom", systemImage: "slider.horizontal.3") }
+                    .buttonStyle(ChipButtonStyle(selected: showCustom || isCustom))
+                Spacer(minLength: 0)
+                Button { model.setMode(.off) } label: { Label("Off", systemImage: "moon.zzz.fill") }
+                    .buttonStyle(ChipButtonStyle(selected: false))
                     .disabled(model.mode == .off)
                     .help("Stop keeping awake; the Mac sleeps normally")
-                }
             }
             }
             if showCustom { customPanel.transition(.opacity.combined(with: .move(edge: .top))) }

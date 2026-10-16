@@ -866,3 +866,23 @@ final class VersionSyncTests: XCTestCase {
         XCTAssertTrue(formula.contains("v\(app)/keepwatch-cli-\(app)-macos.zip"), "Homebrew formula URL must be \(app)")
     }
 }
+
+final class ScreenshotToolbarTests: XCTestCase {
+    let laptop = CGRect(x: 0, y: 0, width: 1280, height: 832)
+
+    func testParsesSavedPoint() {
+        XCTAssertEqual(ScreenshotToolbar.parse("{735, -12}"), CGPoint(x: 735, y: -12))
+        XCTAssertNil(ScreenshotToolbar.parse("{735}"))
+        XCTAssertNil(ScreenshotToolbar.parse("{nan, 1}"))
+        XCTAssertNil(ScreenshotToolbar.parse("junk"))
+    }
+
+    func testOffScreenSpots() {
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 735, y: -12), screens: [laptop]), "below the bottom edge")
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 1000, y: 100), screens: [laptop]), "past the right edge")
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 2000, y: 100), screens: [laptop]), "an unplugged display")
+        XCTAssertFalse(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 440, y: 40), screens: [laptop]))
+        XCTAssertFalse(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 1400, y: 100),
+                                                     screens: [laptop, CGRect(x: 1280, y: 0, width: 1920, height: 1080)]))
+    }
+}

@@ -22,7 +22,7 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 - capture audio or video (it only asks the system whether the mic or camera is running);
 - read or write the TCC privacy database, or ask for Full Disk Access;
 - ask for Accessibility, unless you turn on **Stay active**. Then it uses it for one thing only: when you've been idle for the minutes you chose, it posts a 1-pixel mouse move and moves the pointer back. It never clicks, types or reads the screen, and never does it during a lid session;
-- make network requests, except the opt-in update check: with **Check for updates** (or the daily switch, off by default) it sends one GET to `api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest` with no cookies, reads the version number and release page, and never downloads or installs anything;
+- make network requests, except the opt-in update check: with **Check for updates** (or the daily switch, off by default) it sends one GET to `api.github.com/repos/AgentSkillDeck/keepwatch/releases/latest` with no cookies, reads the version number, the release page and the download links; only when you click **Install and relaunch** does it download `Keepwatch-VERSION.zip` and `SHA256SUMS.txt` from that release (redirects only to GitHub's download hosts), and it replaces the app only if the checksum matches, the new app is signed by team `S99G3X6RPM` with bundle id `app.keepwatch.Keepwatch`, Gatekeeper accepts it (notarized) and its version is newer;
 - stop macOS's own processes. In the app, Stop always asks first. `keepwatch agents stop PID` stops only a process that is an agent session (Claude Code, Codex…) of your own user, and re-checks that just before signalling it.
 
 ## Other things it changes, only when you ask

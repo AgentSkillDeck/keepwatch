@@ -65,7 +65,7 @@ struct DashboardView: View {
     @AppStorage("privacySub") private var privacySub = "Now"
 
     private var lidOpenCard: some View {
-        Card("Lid open", icon: "eye.fill") {
+        Card("Keep awake", icon: "eye.fill") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
@@ -112,12 +112,10 @@ struct DashboardView: View {
         switch tab {
         case .awake, .lid:
             VStack(alignment: .leading, spacing: 12) {
-                SubTabs(selection: Binding(get: { tab == .lid ? "Lid closed" : awakeSub },
-                                           set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }),
-                        options: ["Lid open", "Lid closed"])
-                AwakeModesExplainer()
+                AwakeModePicker(selection: Binding(get: { tab == .lid ? "Lid closed" : awakeSub },
+                                                   set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }))
                 if tab == .lid || awakeSub == "Lid closed" {
-                    Card("Lid closed", icon: "laptopcomputer") { LidSessionCard(compact: false) }
+                    Card("Lid-closed session", icon: "laptopcomputer") { LidSessionCard(compact: false) }
                 } else {
                     lidOpenCard
                 }
@@ -802,12 +800,13 @@ struct SubTabs: View {
     let options: [String]
 
     var body: some View {
-        Picker("Section", selection: $selection) {
-            ForEach(options, id: \.self) { Text($0).tag($0) }
+        HStack(spacing: 6) {
+            ForEach(options, id: \.self) { option in
+                Button(option) { withAnimation(.snappy(duration: 0.2)) { selection = option } }
+                    .buttonStyle(ChipButtonStyle(selected: option == selection))
+            }
+            Spacer(minLength: 0)
         }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 360)
     }
 }
 
@@ -818,11 +817,16 @@ struct AboutCard: View {
     var body: some View {
         Card("Keepwatch \(AppModel.currentVersion)", icon: "info.circle") {
             HStack(spacing: 8) {
-                if let page = model.availableUpdate?.page {
-                    Button { NSWorkspace.shared.open(page) } label: {
-                        Label("Download \(model.availableUpdate?.version ?? "")", systemImage: "arrow.down.circle.fill")
+                if let update = model.availableUpdate {
+                    if update.appZip != nil {
+                        Button { model.installUpdate() } label: {
+                            Label(model.updateInstalling ? "Installing…" : "Install \(update.version) and relaunch",
+                                  systemImage: "arrow.down.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent).tint(Brand.teal)
+                        .disabled(model.updateInstalling)
                     }
-                    .buttonStyle(.borderedProminent).tint(Brand.teal)
+                    Button { NSWorkspace.shared.open(update.page) } label: { Text("What's new") }
                 }
                 Button("Check for updates") { model.checkForUpdates(userAsked: true) }
                 Spacer()
@@ -834,34 +838,51 @@ struct AboutCard: View {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             }
             SwitchRow(icon: "arrow.triangle.2.circlepath", title: "Check for updates once a day",
-                      subtitle: "Off by default. Asks GitHub for the latest version number; nothing else is sent.",
+                      subtitle: "Off by default. Asks GitHub for the latest version number; nothing else is sent. Updates install only when you click Install.",
                       isOn: $model.autoCheckUpdates)
         }
     }
 }
 
 /// The difference between the two ways to stay awake, in two lines.
-struct AwakeModesExplainer: View {
+/// The two ways to stay awake, as two cards you pick between; each says what
+/// it does, so the difference is clear before choosing.
+struct AwakeModePicker: View {
+    @Binding var selection: String
+
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(spacing: 10) {
             mode("eye.fill", "Lid open",
                  "Stops the Mac sleeping while you're away, like caffeinate. Closing the lid still sleeps it. No password.")
             mode("laptopcomputer", "Lid closed",
-                 "Keeps working with the lid shut, no display needed, then sleeps by itself. Needs your password once.")
+                 "Keeps working with the lid shut, then sleeps by itself. Needs your password once.")
         }
     }
 
     private func mode(_ icon: String, _ title: String, _ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: icon).foregroundStyle(Brand.teal).frame(width: 18)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.caption.weight(.semibold))
-                Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        let selected = selection == title
+        return Button { withAnimation(.snappy(duration: 0.2)) { selection = title } } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(selected ? Color.black.opacity(0.85) : Brand.teal)
+                    .frame(width: 28, height: 28)
+                    .background(Circle().fill(selected ? AnyShapeStyle(Brand.teal) : AnyShapeStyle(Brand.teal.opacity(0.14))))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.system(size: 13, weight: .semibold))
+                    Text(text).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true).multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
             }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(selected ? Brand.teal.opacity(0.10) : Color.primary.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(selected ? Brand.teal.opacity(0.7) : Color.primary.opacity(0.06), lineWidth: selected ? 1.5 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .buttonStyle(.plain)
     }
 }
 

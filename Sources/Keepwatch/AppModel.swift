@@ -89,6 +89,7 @@ final class AppModel: ObservableObject {
     @Published var autoCheckUpdates: Bool { didSet { defaults.set(autoCheckUpdates, forKey: "autoCheckUpdates") } }
     @Published private(set) var availableUpdate: UpdateCheck.Release?
     @Published private(set) var updateStatus: String?
+    @Published private(set) var updateInstalling = false
     @Published var customAmount: Double { didSet { defaults.set(customAmount, forKey: "customAmount") } }
     @Published var customUnit: AwakeDuration.Unit { didSet { defaults.set(customUnit.rawValue, forKey: "customUnit") } }
 
@@ -98,7 +99,7 @@ final class AppModel: ObservableObject {
         var action: BannerAction?
     }
 
-    enum BannerAction: Equatable { case restoreSleep }
+    enum BannerAction: Equatable { case restoreSleep, openAccessibility }
 
     // MARK: Internals
 
@@ -162,6 +163,11 @@ final class AppModel: ObservableObject {
             Task { @MainActor in AppModel.shared.handleLidRequest(hours: hours) }
         }
         checkLidSessionOnLaunch()
+        if stayActive && !AXIsProcessTrusted() {
+            banner = Banner(text: "Stay active needs Keepwatch turned on in Accessibility. If it is already on, turn it off and on again (macOS keeps the old app's permission after an update).",
+                            action: .openAccessibility)
+            requestAccessibility()
+        }
         tick()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -738,6 +744,7 @@ final class AppModel: ObservableObject {
         if tickCount % 5 == 0 {
             let trusted = AXIsProcessTrusted()
             if trusted != accessibilityTrusted { accessibilityTrusted = trusted }
+            if trusted, banner?.action == .openAccessibility { banner = nil }
         }
         let idle = StayActive.idleSeconds()
         if let idle, idle < 5 { nudgedThisIdle = false }
@@ -766,12 +773,40 @@ final class AppModel: ObservableObject {
                 availableUpdate = latest
                 updateStatus = "Keepwatch \(latest.version) is available."
                 if isNew || userAsked {
-                    notify("Keepwatch \(latest.version) is available", "Open Keepwatch › Settings to download it.")
+                    notify("Keepwatch \(latest.version) is available", "Open Keepwatch › Settings to install it.")
                 }
             } else {
                 availableUpdate = nil
                 updateStatus = userAsked ? "You have the latest version (\(Self.currentVersion))." : nil
             }
+        }
+    }
+
+    /// Downloads the offered release, checks its checksum, signature and
+    /// notarization, swaps it in (old app to the Trash) and relaunches.
+    func installUpdate() {
+        guard let release = availableUpdate, !updateInstalling else { return }
+        guard !lidIntent.enabled else {
+            updateStatus = "Finish the lid session first; updating restarts Keepwatch."
+            return
+        }
+        let installed = Bundle.main.bundleURL
+        guard installed.pathExtension == "app" else { updateStatus = "Only the installed app can update itself."; return }
+        updateInstalling = true
+        updateStatus = "Downloading Keepwatch \(release.version)…"
+        Task { @MainActor in
+            let failure = await UpdateInstaller.install(release, over: installed, current: Self.currentVersion)
+            updateInstalling = false
+            if let failure {
+                updateStatus = "\(failure) Nothing was changed; you can download it from the release page."
+                return
+            }
+            updateStatus = "Installed. Relaunching…"
+            let relaunch = Process()
+            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+            relaunch.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", installed.path]
+            try? relaunch.run()
+            NSApp.terminate(nil)
         }
     }
 

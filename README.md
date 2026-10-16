@@ -31,6 +31,12 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 
 **Command line only:** you can install the `keepwatch` command without the app.
 
+- One line (no sudo; checks the release checksum and the Developer ID signature, then installs to `~/.local/bin`):
+
+  ```sh
+  curl -fsSL https://raw.githubusercontent.com/AgentSkillDeck/keepwatch/main/scripts/install-cli.sh | sh
+  ```
+
 - Zip: download `keepwatch-cli-VERSION-macos.zip` from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest), unzip it, and put `keepwatch` on your `PATH`:
 
   ```sh
@@ -40,7 +46,7 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
   keepwatch version
   ```
 
-- Homebrew (coming soon): `brew install agentskilldeck/tap/keepwatch-cli`.
+- Homebrew: `brew install agentskilldeck/tap/keepwatch-cli`.
 
 Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themselves. Lid-closed sessions (`keepwatch lid start`) need the app, because it shows the password prompt and runs the watchdog.
 
@@ -73,7 +79,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
   - end **when all agents finish**,
   - on battery only above 20% (you can turn battery off entirely), and it stops at 20%,
   - a **12-hour hard cap** in every case.
-- It asks for your password **once**, when you start a session. That one admin command turns sleep off and starts a small root watchdog. The watchdog alone turns sleep back on and sleeps the Mac, so it works with the lid shut and even if Keepwatch crashes or quits.
+- It asks for your password **once**, when you start a session. That one admin command turns sleep off and starts a small root watchdog as its own launchd job, so it doesn't depend on Keepwatch or the password prompt staying open. The watchdog alone turns sleep back on and sleeps the Mac, so it works with the lid shut and even if Keepwatch crashes or quits.
 - Keepwatch ends a session early without a password (agents done, Mac running hot, you click End) by dropping a stop file that the watchdog checks every 30 s.
 - On launch, Keepwatch checks the real `pmset` state:
   - If sleep is still off from an earlier session whose watchdog is gone (after a restart, say), it offers to turn sleep back on.
@@ -98,7 +104,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 - **Refresh** (⌘R) reads everything again now. Dashboard, Screenshot and the website link close the menu first.
 - **Stay awake** has two sub-tabs: **Lid open** (stops the Mac sleeping while you're away; no password) and **Lid closed** (keeps working with the lid shut, then sleeps by itself; needs your password once).
 - Lid sessions show the time left and whether the watchdog is running. If the watchdog stops while sleep is off, or doesn't answer **End lid session**, Keepwatch asks for your password and turns sleep back on itself.
-- **Check for updates** in Settings, and an optional daily check (off by default). It only opens the release page; it never installs anything.
+- **Check for updates** in Settings, and an optional daily check (off by default). **Install and relaunch** downloads the new version from the GitHub release and installs it only if its checksum matches, it is signed by Keepwatch's Developer ID and notarized by Apple. The old app goes to the Trash. Nothing installs unless you click.
 
 **Dashboard**
 - A summary you choose: battery, health, agent sessions, mic, camera, CPU, memory, temperature, cycles, time left, ports, security. Six to a row.
@@ -155,7 +161,7 @@ Starting a lid session is deliberately **not** available by URL, so a web page c
 ## Build, sign, notarize
 
 ```sh
-swift test                      # 83 unit, shell-watchdog and live read-only tests
+swift test                      # 101 unit, watchdog (launchd), updater and read-only tests
 scripts/build-app.sh            # dist/Keepwatch.app (universal)
 scripts/sign.sh                 # Developer ID + hardened runtime + timestamp
 # one-time: store notarization credentials in your keychain

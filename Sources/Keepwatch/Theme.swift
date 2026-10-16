@@ -95,6 +95,24 @@ struct TileButtonStyle: ButtonStyle {
     }
 }
 
+/// A small capsule button that hugs its label, for rows of choices.
+struct ChipButtonStyle: ButtonStyle {
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 28)
+            .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
+            .background(Capsule().fill(selected ? AnyShapeStyle(Brand.teal)
+                                                : AnyShapeStyle(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.07))))
+            .overlay(Capsule().strokeBorder(selected ? Color.clear : Color.primary.opacity(0.06)))
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .contentShape(Capsule())
+    }
+}
+
 /// A capsule showing whether the mic or camera is live.
 struct StatusChip: View {
     var on: Bool

@@ -1,4 +1,5 @@
 import AppKit
+import KeepwatchCore
 import Carbon.HIToolbox
 import Foundation
 
@@ -55,6 +56,7 @@ final class Hotkey {
 enum Screenshot {
     static func openToolbar() {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.screenshot.launcher") else { return }
+        ScreenshotToolbar.resetIfOffScreen(screens: NSScreen.screens.map(\.frame))
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }
 }
