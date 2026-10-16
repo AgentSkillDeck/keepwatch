@@ -62,7 +62,7 @@ struct MenuAgents: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Eyebrow(text: "Agent sessions")
+            MenuHeading("Agent sessions", info: "AI coding agents running on this Mac, by session name when Claude Code has one, with how long each has run. Open the Dashboard to stop one.")
             if model.agentSessions.isEmpty {
                 Text("No agents running.").font(.caption).foregroundStyle(.secondary)
             }
@@ -90,7 +90,7 @@ struct MenuMemory: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Eyebrow(text: "Using the most memory")
+            MenuHeading("Using the most memory", info: "The three apps using the most memory right now. Open the Dashboard › Apps to see more or quit one.")
             if model.topApps.isEmpty { Text("Reading memory use…").font(.caption).foregroundStyle(.secondary) }
             ForEach(model.topApps.prefix(3)) { app in
                 HStack(spacing: 8) {
@@ -262,9 +262,7 @@ struct PrivacySwitches: View {
     /// The menu: mic and camera side by side, alerts as a small switch.
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Eyebrow(text: "Privacy")
-                Spacer()
+            MenuHeading("Privacy", info: "Red means live. Click Mic to mute or unmute it for every app. When the camera is live, click it to open the Camera list, where you can switch the app off. Screen turns red while someone is connected with Screen Sharing. The bell sends an alert when any of them turns on.") {
                 Button { model.alertOnMicCamera.toggle() } label: {
                     Label(model.alertOnMicCamera ? "Alerts on" : "Alerts off",
                           systemImage: model.alertOnMicCamera ? "bell.fill" : "bell.slash")
@@ -274,18 +272,23 @@ struct PrivacySwitches: View {
                 .buttonStyle(.borderless)
                 .help("Tell me when the mic or camera turns on")
             }
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 PrivacyTile(icon: micIcon, title: "Mic", state: micShort, live: model.privacy.micInUse && model.privacy.micMuted != true,
                             action: model.privacy.micMuted == nil ? nil : { model.setMicMuted(!(model.privacy.micMuted ?? false)) })
                     .help(model.privacy.micMuted == true ? "Muted. Click to unmute." : "\(micStatus). Click to mute.")
                 PrivacyTile(icon: model.privacy.cameraInUse ? "video.fill" : "video.slash", title: "Camera",
-                            state: model.privacy.cameraInUse ? "Live · Turn off…" : "Off", live: model.privacy.cameraInUse,
+                            state: model.privacy.cameraInUse ? "Live" : "Off", live: model.privacy.cameraInUse,
                             action: model.privacy.cameraInUse ? { model.open(.camera) } : nil)
                     .help(model.privacy.cameraInUse
                           ? "Opens the Camera list in System Settings. Switch the app off there to stop it."
                           : "No app is using the camera")
+                let shared = model.screenWatchers.contains(.remoteViewer)
+                PrivacyTile(icon: shared ? "rectangle.on.rectangle" : "lock.display", title: "Screen",
+                            state: shared ? "Shared" : "Private", live: shared,
+                            action: shared ? { AppModel.openSharingSettings() } : nil)
+                    .help(shared ? "Someone is connected with Screen Sharing. Click to open Sharing settings."
+                                 : "No one is connected with Screen Sharing")
             }
-            ScreenWatchRows()
         }
     }
 
@@ -397,16 +400,14 @@ struct ScreenWatchRows: View {
     var body: some View {
         ForEach(model.screenWatchers, id: \.self) { w in
             Button {
-                if w == .remoteViewer, let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
-                    NSWorkspace.shared.open(url)
-                }
+                AppModel.openSharingSettings()
             } label: {
-                Label(w.text, systemImage: w == .remoteViewer ? "rectangle.on.rectangle" : "record.circle")
+                Label(w.text, systemImage: "rectangle.on.rectangle")
                     .font(.caption.weight(.semibold)).foregroundStyle(Brand.live)
                     .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
             }
             .buttonStyle(.plain)
-            .help(w == .remoteViewer ? "Open Sharing settings to turn Screen Sharing off" : "")
+            .help("Open Sharing settings to turn Screen Sharing off")
         }
     }
 }
@@ -421,19 +422,19 @@ struct PrivacyTile: View {
 
     var body: some View {
         Button { action?() } label: {
-            HStack(spacing: 8) {
-                Image(systemName: icon).font(.system(size: 14, weight: .semibold))
+            HStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(live ? Brand.live : Brand.teal)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 24, height: 24)
                     .background(Circle().fill((live ? Brand.live : Brand.teal).opacity(0.15)))
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(title).font(.system(size: 12, weight: .semibold))
-                    Text(state).font(.caption2.weight(.medium))
-                        .foregroundStyle(live ? Brand.live : Color.secondary).lineLimit(1)
+                    Text(title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    Text(state).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(live ? Brand.live : Color.secondary).lineLimit(1).minimumScaleFactor(0.85)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(8)
+            .padding(.horizontal, 7).padding(.vertical, 7)
             .frame(maxWidth: .infinity)
             .background(RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(live ? Brand.live.opacity(0.10) : Color.primary.opacity(0.05)))
@@ -442,7 +443,8 @@ struct PrivacyTile: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
-        .disabled(action == nil)
+        // Not .disabled: that greys the tile out, and "off" isn't "unavailable".
+        .allowsHitTesting(action != nil)
     }
 }
 
@@ -466,9 +468,7 @@ struct AwakeControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-            HStack {
-                Eyebrow(text: "Keep awake")
-                Spacer()
+            MenuHeading("Keep awake", info: "Stops your Mac sleeping while the laptop is open, for the time you pick (⋯ has more lengths and a custom time). Closing the lid still sleeps it; use Laptop closed for that. “While AI agents run” keeps it awake only until your agents finish. No password.") {
                 if isTimedOrForever {
                     Button("Turn off") { model.setMode(.off) }
                         .buttonStyle(.borderless).font(.caption.weight(.semibold))
@@ -627,29 +627,16 @@ struct LidSessionCard: View {
     @EnvironmentObject var model: AppModel
     var compact: Bool
     @State private var showLidCustom = false
-    @State private var showLidInfo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-                HStack(spacing: 4) {
-                    Eyebrow(text: "Laptop closed")
-                    if !model.lidIntent.enabled {
-                        Button { withAnimation(.snappy) { showLidInfo.toggle() } } label: {
-                            Image(systemName: showLidInfo ? "info.circle.fill" : "info.circle").font(.caption)
-                        }
-                        .buttonStyle(.borderless).foregroundStyle(.secondary)
-                    }
-                    Spacer()
+                MenuHeading("Laptop closed", info: "Keeps working with the lid shut, for example in your bag. Pick how long it may stay closed, then Start. It asks for your password once, then sleeps by itself when the time is up, the battery is low, it gets hot, or (if you chose) your agents finish.") {
                     if model.lidIntent.enabled, let end = model.lidIntent.expires {
                         Text("until \(end.formatted(date: .omitted, time: .shortened)) at most")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-            }
-            if compact && showLidInfo && !model.lidIntent.enabled {
-                Text("Keeps working with the lid shut, then sleeps by itself after the time you pick. Asks for your password once.")
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             if model.lidIntent.enabled {
                 HStack(spacing: 10) {

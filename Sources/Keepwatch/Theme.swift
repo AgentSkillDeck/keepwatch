@@ -77,6 +77,45 @@ struct Eyebrow: View {
     }
 }
 
+/// A menu section heading with an ⓘ button that shows a one-line
+/// explanation underneath (hover tooltips don't show in the menu panel).
+struct MenuHeading<Trailing: View>: View {
+    var title: String
+    var info: String
+    @ViewBuilder var trailing: Trailing
+    @State private var showInfo = false
+
+    init(_ title: String, info: String, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+        self.title = title
+        self.info = info
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Eyebrow(text: title)
+                Button { withAnimation(.snappy(duration: 0.2)) { showInfo.toggle() } } label: {
+                    Image(systemName: showInfo ? "info.circle.fill" : "info.circle").font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(showInfo ? Brand.teal : Color.secondary)
+                .accessibilityLabel("About \(title)")
+                Spacer(minLength: 4)
+                trailing
+            }
+            if showInfo {
+                Text(info).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
 /// A selectable tile: a big value and a small caption.
 struct TileButtonStyle: ButtonStyle {
     var selected: Bool

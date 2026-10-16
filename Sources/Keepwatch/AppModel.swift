@@ -979,6 +979,10 @@ final class AppModel: ObservableObject {
         }
     }
 
+    static func openSharingSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") { NSWorkspace.shared.open(url) }
+    }
+
     /// How a mode reads in the activity log.
     static func describe(_ mode: KeepAwakeMode) -> String {
         switch mode {

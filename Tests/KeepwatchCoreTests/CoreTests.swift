@@ -1044,6 +1044,6 @@ final class ScreenWatchTests: XCTestCase {
     func testWatchers() {
         XCTAssertEqual(ScreenWatch.watchers(processNames: ["Finder", "replayd"]), [], "replayd always runs; not a signal")
         XCTAssertEqual(ScreenWatch.watchers(processNames: ["screensharingd"]), [.remoteViewer])
-        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screencapture", "screensharingd"]), [.remoteViewer, .capture])
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screencapture"]), [], "your own screenshot isn't a warning")
     }
 }
