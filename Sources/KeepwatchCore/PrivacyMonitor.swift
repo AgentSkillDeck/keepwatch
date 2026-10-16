@@ -17,10 +17,33 @@ public struct PrivacySnapshot: Equatable, Sendable {
     /// Who is recording, from the CoreAudio process list (macOS 14+).
     /// Empty when the mic is in use but the system didn't say by whom.
     public var micUsers: [MicUser]
-    /// Whether the default input device is muted; nil if it has no mute control.
+    /// Whether every mic that can be muted is muted; nil if none can be.
     public var micMuted: Bool?
+    /// Names of the mics and cameras running now (built-in, AirPods, USB…).
+    public var liveMics: [String] = []
+    public var liveCameras: [String] = []
+    /// Connected mics with no mute control, which the mic switch can't silence.
+    public var unmutableMics: [String] = []
+
+    public init(micInUse: Bool, cameraInUse: Bool, micUsers: [MicUser], micMuted: Bool?,
+                liveMics: [String] = [], liveCameras: [String] = [], unmutableMics: [String] = []) {
+        self.micInUse = micInUse
+        self.cameraInUse = cameraInUse
+        self.micUsers = micUsers
+        self.micMuted = micMuted
+        self.liveMics = liveMics
+        self.liveCameras = liveCameras
+        self.unmutableMics = unmutableMics
+    }
 
     public static let idle = PrivacySnapshot(micInUse: false, cameraInUse: false, micUsers: [], micMuted: nil)
+
+    /// Muted only if every mic with a mute control is muted; nil if none has one.
+    public static func combinedMute(_ states: [Bool?]) -> Bool? {
+        let known = states.compactMap { $0 }
+        guard !known.isEmpty else { return nil }
+        return known.allSatisfy { $0 }
+    }
 }
 
 /// Reads mic and camera state from CoreAudio and CoreMediaIO.
@@ -29,14 +52,20 @@ public enum PrivacyMonitor {
     /// misreporting driver can't make us allocate without limit.
     static let maxObjects = 512
 
+    /// Every connected mic and camera counts, not just the default ones.
     public static func snapshot() -> PrivacySnapshot {
         let inputs = audioInputDevices()
-        let micInUse = inputs.contains { audioDeviceIsRunningSomewhere($0) }
+        let running = inputs.filter { audioDeviceIsRunningSomewhere($0) }
+        let cameras = cameraDevices().filter { cameraIsRunningSomewhere($0) }
+        let mutes = inputs.map { canSetMute($0) ? inputMute($0) : nil }
         return PrivacySnapshot(
-            micInUse: micInUse,
-            cameraInUse: cameraDevices().contains { cameraIsRunningSomewhere($0) },
-            micUsers: micInUse ? processesRecording() : [],
-            micMuted: defaultInputDevice().flatMap(inputMute)
+            micInUse: !running.isEmpty,
+            cameraInUse: !cameras.isEmpty,
+            micUsers: running.isEmpty ? [] : processesRecording(),
+            micMuted: PrivacySnapshot.combinedMute(mutes),
+            liveMics: running.map { string($0, kAudioObjectPropertyName) ?? "Microphone" },
+            liveCameras: cameras.map { cameraName($0) ?? "Camera" },
+            unmutableMics: zip(inputs, mutes).filter { $0.1 == nil }.map { string($0.0, kAudioObjectPropertyName) ?? "Microphone" }
         )
     }
 
@@ -111,29 +140,34 @@ public enum PrivacyMonitor {
         return s.isEmpty ? nil : s
     }
 
-    /// Mute or unmute the default input device. Returns false if the device has
-    /// no settable mute. This is a soft mute: another app can unmute it.
+    /// Mute or unmute every connected mic that has a mute control (built-in,
+    /// AirPods, USB…), not only the default one, so an app recording from
+    /// another mic is muted too. Returns false if none could be changed. This
+    /// is a soft mute: another app can unmute it.
     @discardableResult
     public static func setMicMuted(_ muted: Bool) -> Bool {
-        guard let device = defaultInputDevice() else { return false }
-        var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioObjectPropertyScopeInput,
-                                                 mElement: kAudioObjectPropertyElementMain)
-        var settable: DarwinBoolean = false
-        guard AudioObjectHasProperty(device, &address),
-              AudioObjectIsPropertySettable(device, &address, &settable) == noErr, settable.boolValue else { return false }
-        var value: UInt32 = muted ? 1 : 0
-        return AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+        var changed = false
+        for device in audioInputDevices() where canSetMute(device) {
+            var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioObjectPropertyScopeInput,
+                                                     mElement: kAudioObjectPropertyElementMain)
+            var value: UInt32 = muted ? 1 : 0
+            if AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr {
+                changed = true
+            }
+        }
+        return changed
     }
 
-    /// Whether the default input device offers a mute control at all.
-    public static var canMuteMic: Bool {
-        guard let device = defaultInputDevice() else { return false }
+    static func canSetMute(_ device: AudioObjectID) -> Bool {
         var address = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyMute, mScope: kAudioObjectPropertyScopeInput,
                                                  mElement: kAudioObjectPropertyElementMain)
         var settable: DarwinBoolean = false
         return AudioObjectHasProperty(device, &address)
             && AudioObjectIsPropertySettable(device, &address, &settable) == noErr && settable.boolValue
     }
+
+    /// Whether any connected mic offers a mute control.
+    public static var canMuteMic: Bool { audioInputDevices().contains(where: canSetMute) }
 
     // MARK: Camera
 
@@ -151,6 +185,20 @@ public enum PrivacyMonitor {
         guard CMIOObjectGetPropertyData(system, &address, 0, nil, UInt32(count * MemoryLayout<CMIOObjectID>.size),
                                         &used, &ids) == noErr else { return [] }
         return Array(ids.prefix(Int(used) / MemoryLayout<CMIOObjectID>.size))
+    }
+
+    static func cameraName(_ device: CMIOObjectID) -> String? {
+        var address = CMIOObjectPropertyAddress(mSelector: CMIOObjectPropertySelector(kCMIOObjectPropertyName),
+                                                mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+                                                mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain))
+        guard CMIOObjectHasProperty(device, &address) else { return nil }
+        var value: Unmanaged<CFString>?
+        var used: UInt32 = 0
+        let size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard CMIOObjectGetPropertyData(device, &address, 0, nil, size, &used, &value) == noErr,
+              let cf = value?.takeRetainedValue() else { return nil }
+        let name = cf as String
+        return name.isEmpty ? nil : name
     }
 
     static func cameraIsRunningSomewhere(_ device: CMIOObjectID) -> Bool {

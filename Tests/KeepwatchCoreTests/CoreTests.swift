@@ -1077,3 +1077,20 @@ final class CodexTitleTests: XCTestCase {
         XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["resume", id]), id)
     }
 }
+
+final class MultiDeviceMuteTests: XCTestCase {
+    func testMutedOnlyWhenEveryMutableMicIsMuted() {
+        XCTAssertEqual(PrivacySnapshot.combinedMute([true, nil, true]), true, "a mic without mute control is ignored")
+        XCTAssertEqual(PrivacySnapshot.combinedMute([true, false]), false, "AirPods still live: not muted")
+        XCTAssertNil(PrivacySnapshot.combinedMute([nil, nil]))
+        XCTAssertNil(PrivacySnapshot.combinedMute([]))
+    }
+
+    /// Read-only: lists this Mac's devices without changing anything.
+    func testLiveSnapshotNamesDevices() {
+        let s = PrivacyMonitor.snapshot()
+        XCTAssertEqual(s.micInUse, !s.liveMics.isEmpty)
+        XCTAssertEqual(s.cameraInUse, !s.liveCameras.isEmpty)
+        XCTAssertFalse(s.liveMics.contains(""))
+    }
+}

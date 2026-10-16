@@ -91,7 +91,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 **Privacy**
 - A red **mic and camera badge** in the menu bar while either is live: <img src="docs/media/menubar-live.png" alt="menu-bar icon with the red mic and camera badge" height="22">
 - **Which app is using the mic**, from CoreAudio's process list (macOS 14+).
-- A **mic switch** that mutes the mic for every app.
+- A **mic switch** that mutes every connected mic (built-in, AirPods, USB…) for every app, and names any mic that has no mute control. The mic and camera rows show which device is live.
 - **Camera status**, with **Turn off…** while it is live: macOS has no switch that turns the camera off for every app, so this opens the Camera list in System Settings, where switching an app off stops it using the camera. Also an alert when the mic or camera turns on, and **Reset camera access**, which makes every app ask again.
 - A **history** of when the mic and camera turned on and off, kept only on this Mac, and **By app**: how many times and how long each app used the mic or camera today, in 7 days or in 30 days.
 - **Screen Sharing alert:** a red warning (and a notification) while someone is connected to this Mac with Screen Sharing or Remote Management. Apps that record the screen themselves get macOS's own purple indicator; there is no public way for another app to see those.

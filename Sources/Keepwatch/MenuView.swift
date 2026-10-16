@@ -312,12 +312,12 @@ struct PrivacySwitches: View {
             HStack(spacing: 6) {
                 PrivacyTile(icon: micIcon, title: "Mic", state: micShort, live: model.privacy.micInUse && model.privacy.micMuted != true,
                             action: model.privacy.micMuted == nil ? nil : { model.setMicMuted(!(model.privacy.micMuted ?? false)) })
-                    .help(model.privacy.micMuted == true ? "Muted. Click to unmute." : "\(micStatus). Click to mute.")
+                    .help(model.privacy.micMuted == true ? "All mics muted. Click to unmute." : "\(micStatus). Click to mute all mics.")
                 PrivacyTile(icon: model.privacy.cameraInUse ? "video.fill" : "video.slash", title: "Camera",
                             state: model.privacy.cameraInUse ? "Live" : "Off", live: model.privacy.cameraInUse,
                             action: model.privacy.cameraInUse ? { model.open(.camera) } : nil)
                     .help(model.privacy.cameraInUse
-                          ? "Open the Camera list to switch the app off"
+                          ? "\(model.privacy.liveCameras.joined(separator: ", ")) live. Open the Camera list to switch the app off"
                           : "No app is using the camera")
                 let shared = model.screenWatchers.contains(.remoteViewer)
                 PrivacyTile(icon: shared ? "rectangle.on.rectangle" : "lock.display", title: "Screen",
@@ -347,7 +347,9 @@ struct PrivacySwitches: View {
                           tint: model.privacy.cameraInUse ? Brand.live : Brand.teal)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Camera").font(.system(size: 13, weight: .medium))
-                    Text(model.privacy.cameraInUse ? "In use" : "Not in use")
+                    Text(model.privacy.cameraInUse
+                         ? (model.privacy.liveCameras.isEmpty ? "In use" : "In use · " + model.privacy.liveCameras.joined(separator: ", "))
+                         : "Not in use")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -367,6 +369,10 @@ struct PrivacySwitches: View {
             .help("macOS has no camera off switch for all apps")
             SwitchRow(icon: "bell.badge", title: "Alert me",
                       subtitle: "When the mic or camera turns on", isOn: $model.alertOnMicCamera)
+            if !model.privacy.unmutableMics.isEmpty {
+                Label("Can't be muted here: \(model.privacy.unmutableMics.joined(separator: ", "))", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             ScreenWatchRows()
             SwitchRow(icon: "laptopcomputer.and.arrow.down", title: "Mute mic when lid closes",
                       subtitle: "Unmutes when you open it", isOn: $model.muteMicWhenLidCloses)
@@ -385,7 +391,8 @@ struct PrivacySwitches: View {
         if model.privacy.micMuted == true { return "Muted" }
         if model.privacy.micInUse {
             let who = model.privacy.micUsers.map { model.appName(for: $0) }
-            return who.isEmpty ? "In use" : "In use by " + who.joined(separator: ", ")
+            let on = model.privacy.liveMics.isEmpty ? "" : " · " + model.privacy.liveMics.joined(separator: ", ")
+            return (who.isEmpty ? "In use" : "In use by " + who.joined(separator: ", ")) + on
         }
         return "Not in use"
     }
