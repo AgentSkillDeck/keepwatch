@@ -62,10 +62,11 @@ struct DashboardView: View {
     }
 
     @AppStorage("privacySub") private var privacySub = "Now"
+    @AppStorage("awakeSub2") private var awakeSub = "Laptop open"
     @AppStorage("moreAwakeOptions") private var moreAwakeOptions = false
 
     private var lidOpenCard: some View {
-        Card("Laptop open: keep awake", icon: "eye.fill") {
+        Card("Laptop open", icon: "eye.fill") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
@@ -86,7 +87,7 @@ struct DashboardView: View {
             } label: {
                 Text("More options: automatic, battery limits, shortcuts").font(.system(size: 12, weight: .semibold))
             }
-            if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" }), !others.isEmpty {
+            if let others = model.pmset?.sleepPreventedBy.filter({ $0 != "powerd" && $0 != "Keepwatch" }), !others.isEmpty {
                 Label("Also keeping your Mac awake: \(others.joined(separator: ", "))", systemImage: "info.circle")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -120,10 +121,14 @@ struct DashboardView: View {
         switch tab {
         case .awake, .lid:
             VStack(alignment: .leading, spacing: 12) {
-                Text("Two ways to keep working. Use either, or both: keep awake while you're nearby, then start a lid session before you close the laptop.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                lidOpenCard
-                Card("Laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
+                SubTabs(selection: Binding(get: { tab == .lid ? "Laptop closed" : awakeSub },
+                                           set: { awakeSub = $0; if self.tab == .lid { self.tab = .awake } }),
+                        options: ["Laptop open", "Laptop closed"])
+                if tab == .lid || awakeSub == "Laptop closed" {
+                    Card("Laptop closed", icon: "laptopcomputer.slash") { LidSessionCard(compact: false) }
+                } else {
+                    lidOpenCard
+                }
             }
         case .agents:
             Card("Agent sessions", icon: "terminal.fill") {
