@@ -1,7 +1,7 @@
 {
   "name": "keepwatch",
   "description": "Keep a Mac awake exactly while agent work runs, list and stop agent sessions, and check power, mic, camera, security and memory with the keepwatch CLI (needs the Keepwatch app).",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "AgentSkillDeck",
     "url": "https://github.com/AgentSkillDeck"
