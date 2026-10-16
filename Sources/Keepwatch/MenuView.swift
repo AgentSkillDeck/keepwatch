@@ -438,7 +438,7 @@ struct LidSessionCard: View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
                 HStack {
-                    Eyebrow(text: "Lid closed")
+                    Eyebrow(text: "Laptop closed")
                     Spacer()
                     if model.lidIntent.enabled, let end = model.lidIntent.expires {
                         Text("until \(end.formatted(date: .omitted, time: .shortened)) at most")
