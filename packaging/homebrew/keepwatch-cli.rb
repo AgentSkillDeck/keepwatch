@@ -10,7 +10,7 @@ class KeepwatchCli < Formula
   # .../releases/download/vVERSION/keepwatch-cli-VERSION-macos.zip
   url "https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.3.0/keepwatch-cli-0.3.0-macos.zip"
   # FILL IN AT RELEASE TIME: shasum -a 256 dist/keepwatch-cli-<version>-macos.zip
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  sha256 "d9e3753e6745141f01637dc210085c049d2b483012cc00214549e32d1b309ea3"
   license "Apache-2.0"
 
   depends_on macos: :sonoma
