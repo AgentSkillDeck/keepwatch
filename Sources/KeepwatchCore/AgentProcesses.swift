@@ -42,6 +42,23 @@ public struct AgentMatcher: Sendable {
     /// session (`claude daemon run`), so they must never keep the Mac awake.
     public static let supervisorSubcommands: Set<String> = ["daemon"]
 
+    /// Script runtimes: an agent written in JavaScript or Python runs as
+    /// "node", "bun" or "python3", so for these the script path decides.
+    public static let interpreters: Set<String> = ["node", "bun", "deno", "python", "python3", "Python"]
+    /// Install paths that identify an agent run through an interpreter
+    /// (npm global packages, pipx/venv installs).
+    public static let packageMarkers: [(marker: String, agent: String)] = [
+        ("@google/gemini-cli", "Gemini CLI"),
+        ("@qwen-code/qwen-code", "Qwen Code"),
+        ("@sourcegraph/amp", "Amp"),
+        ("@anthropic-ai/claude-code", "Claude Code"),
+        ("@openai/codex", "Codex"),
+        ("opencode-ai", "OpenCode"),
+        ("cursor-agent", "Cursor Agent"),
+        ("/aider/", "Aider"),
+        ("aider-chat", "Aider"),
+    ]
+
     public var names: [String: String]
 
     public init(names: [String: String] = AgentMatcher.defaultNames) {
@@ -49,13 +66,36 @@ public struct AgentMatcher: Sendable {
     }
 
     /// Whether the executable name is an agent CLI (before argument checks).
-    public func isCandidate(_ name: String) -> Bool { names[name.lowercased()] != nil }
+    public func isCandidate(_ name: String) -> Bool {
+        names[name.lowercased()] != nil || Self.interpreters.contains(name)
+    }
+
+    /// The agent a script runtime is running, from its arguments: the script's
+    /// file name (`node …/bin/gemini`, `python3 …/bin/aider`, `python3 -m aider`)
+    /// or a known install path. Arguments after the script are the agent's own
+    /// and never count, so `node server.js --name gemini` isn't an agent.
+    func interpretedAgent(_ arguments: [String]) -> String? {
+        var i = 0
+        while i < arguments.count {
+            let arg = arguments[i]
+            if arg == "-m", i + 1 < arguments.count { return names[arguments[i + 1].lowercased()] }
+            if arg.hasPrefix("-") { i += 1; continue }
+            // The first non-flag argument is the script.
+            let base = ((arg as NSString).lastPathComponent as NSString).deletingPathExtension.lowercased()
+            if let agent = names[base] { return agent }
+            return Self.packageMarkers.first { arg.contains($0.marker) }?.agent
+        }
+        return nil
+    }
 
     /// Display name of the agent this process belongs to, or nil.
     public func agentName(for process: RunningProcess) -> String? {
-        guard let agent = names[process.name.lowercased()] else { return nil }
-        let idle = process.arguments.contains { arg in Self.idleHelperMarkers.contains { arg.contains($0) } }
-            || Self.supervisorSubcommands.contains(process.arguments.first ?? "")
+        let direct = names[process.name.lowercased()]
+        let interpreted = direct == nil && Self.interpreters.contains(process.name) ? interpretedAgent(process.arguments) : nil
+        guard let agent = direct ?? interpreted else { return nil }
+        let args = interpreted == nil ? process.arguments : Array(process.arguments.drop { $0.hasPrefix("-") }.dropFirst())
+        let idle = args.contains { arg in Self.idleHelperMarkers.contains { arg.contains($0) } }
+            || Self.supervisorSubcommands.contains(args.first ?? "")
         return idle ? nil : agent
     }
 
@@ -148,10 +188,13 @@ public struct AgentSession: Equatable, Hashable, Identifiable, Sendable {
     /// The session's working directory, if readable.
     public var folder: String?
     public var started: Date?
+    /// The agent's own session id, when its arguments carry one.
+    public var sessionID: String?
     public var id: Int32 { pid }
 
-    public init(pid: Int32, agent: String, folder: String? = nil, started: Date? = nil) {
+    public init(pid: Int32, agent: String, folder: String? = nil, started: Date? = nil, sessionID: String? = nil) {
         self.pid = pid; self.agent = agent; self.folder = folder; self.started = started
+        self.sessionID = sessionID
     }
 
     /// Last path component of the folder, or "~" for the home folder.
@@ -171,7 +214,8 @@ extension AgentMatcher {
         processes.compactMap { p -> AgentSession? in
             guard let agent = agentName(for: p) else { return nil }
             let d = details(p.pid)
-            return AgentSession(pid: p.pid, agent: agent, folder: d.folder, started: d.started)
+            return AgentSession(pid: p.pid, agent: agent, folder: d.folder, started: d.started,
+                                sessionID: SessionTitles.sessionID(fromArguments: p.arguments))
         }
         .sorted { ($0.started ?? .distantFuture, $0.pid) < ($1.started ?? .distantFuture, $1.pid) }
     }

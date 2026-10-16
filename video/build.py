@@ -46,29 +46,40 @@ def srt_cues(path):
 SHOTS = {
     "Awake": ("dashboard-dark.png", "Stay awake, your way",
               ["1 h, 3 h, a day, forever", "Or any custom time", "Or only while agents run"],
-              [(72, 745, 1376, 192), (72, 952, 1376, 70)]),
+              [(60, 780, 1400, 64), (60, 860, 1400, 62)]),
     "Agents": ("tab-agents-dark.png", "Every agent session",
-               ["Claude Code, Codex, Gemini and more", "Working or gone quiet", "Stop any session in one click"],
-               [(72, 700, 1376, 265), (1130, 805, 300, 130)]),
+               ["Claude Code, Codex, Gemini and more", "Working or gone quiet", "Stop one, or set a time limit"],
+               [(72, 660, 1376, 265), (1130, 765, 305, 120)]),
     "Lid": ("tab-lid-dark.png", "Work with the lid shut",
-            ["Sleeps by itself when time is up", "1, 3, 6 or 12 hours", "On battery above 20%"],
-            [(60, 770, 1400, 80), (60, 1135, 1400, 70)]),
+            ["Sleeps by itself when time is up", "1, 3, 6, 12 hours or custom", "On battery above 20%"],
+            [(60, 780, 1400, 64), (60, 940, 1400, 62), (60, 1140, 1400, 58)]),
     "Privacy": ("tab-privacy-dark.png", "Mic and camera, watched",
-                ["See which app is listening", "Mute the mic with one switch", "History stays on your Mac"],
-                [(60, 700, 1400, 140), (60, 1120, 1400, 215)]),
-    "Security": ("tab-security-dark.png", "Security at a glance",
-                 ["Firewall and FileVault", "Gatekeeper and SIP", "AirDrop set to Everyone? You'll see it"],
-                 [(60, 705, 1400, 300), (60, 985, 1400, 60)]),
+                ["See which app is listening", "Mute every mic with one switch", "History stays on your Mac"],
+                [(60, 740, 1400, 145), (60, 900, 1400, 66)]),
+    "Timer": ("menu-dark.png", "A quick timer",
+              ["5 to 45 minutes, from the menu", "Countdown in the menu bar"],
+              [(18, 790, 644, 100)]),
     "Your way": ("dashboard-all-tiles-dark.png", "Make it yours",
-                 ["Pick the tiles you want", "Handy Mac settings, one switch"],
-                 [(72, 230, 1376, 400)]),
+                 ["Pick the tiles you want", "Click a tile to open its tab"],
+                 [(72, 230, 1376, 500)]),
 }
 PAIRS = {
-    "Battery and apps": (("tab-power-dark.png", [(60, 640, 1400, 350), (60, 1090, 1400, 250)]),
-                         ("tab-ports-dark.png", [(60, 640, 1400, 410)]),
-                         "Battery and memory",
-                         ["Battery health over time", "Quit the apps using the most memory", "Stop a forgotten dev server"]),
+    "Security": (("tab-security-dark.png", [(60, 735, 1400, 360)]),
+                 ("tab-startup-dark.png", [(60, 785, 1400, 60), (60, 905, 1400, 70)]),
+                 "Security at a glance",
+                 ["Firewall, FileVault, AirDrop", "Know when something new starts at login"]),
+    "Battery and apps": (("tab-power-dark.png", [(60, 960, 1400, 70), (60, 1090, 1400, 300)]),
+                         ("tab-storage-dark.png", [(60, 740, 1400, 75), (60, 905, 1400, 250)]),
+                         "Battery and storage",
+                         ["Battery health over time", "Charge limit, one click away", "See what fills your disk"]),
 }
+
+
+def png_size(name):
+    """Width and height from a PNG's header."""
+    data = (ROOT / "tour" / "assets" / name).read_bytes()[16:24]
+    return int.from_bytes(data[:4], "big"), int.from_bytes(data[4:], "big")
+
 
 TEAL = "#2EE6CF"
 IMG_H = 880  # on-screen height of a dashboard screenshot
@@ -104,8 +115,8 @@ for i, name in enumerate(names):
           <h1 id="{sid}-title">Keepwatch</h1>
           <p id="{sid}-tag">Keep your Mac awake for AI agents.<span class="br"></span>Keep watch on your mic and camera.</p>
         </div>
-        <div class="win menu" id="{sid}-win" style="left:1300px;top:70px;width:440px;height:806px">
-          <img src="assets/menu-dark.png" alt="" style="width:440px;height:806px" /></div>"""
+        <div class="win menu" id="{sid}-win" style="left:1300px;top:100px;width:440px;height:757px">
+          <img src="assets/menu-dark.png" alt="" style="width:440px;height:757px" /></div>"""
         anim += [
             f'tl.fromTo("#{sid}-icon",{{scale:0.6,opacity:0}},{{scale:1,opacity:1,duration:0.9,ease:"back.out(1.6)"}},{start+0.2})',
             f'tl.fromTo("#{sid}-title",{{y:40,opacity:0}},{{y:0,opacity:1,duration:0.8,ease:"power3.out"}},{start+0.6})',
@@ -118,14 +129,14 @@ for i, name in enumerate(names):
         body = f"""
         <div class="copy"><div class="kicker" id="{sid}-k">{html.escape(name if name != "Your way" else "Customize")}</div>
           <h2 id="{sid}-t">{html.escape(title)}</h2><ul>{bullets(items, sid)}</ul></div>
-        {shot_window(sid, img, boxes, 1520, 1440, 880, 100, IMG_H)}"""
+        {shot_window(sid, img, boxes, *png_size(img), 880, 100, IMG_H)}"""
     elif name in PAIRS:
         (img_a, box_a), (img_b, box_b), title, items = PAIRS[name]
         body = f"""
-        <div class="copy"><div class="kicker" id="{sid}-k">Battery and apps</div>
+        <div class="copy"><div class="kicker" id="{sid}-k">{html.escape(name)}</div>
           <h2 id="{sid}-t">{html.escape(title)}</h2><ul>{bullets(items, sid)}</ul></div>
-        {shot_window(sid + "a", img_a, box_a, 1520, 1440, 760, 150, 720)}
-        {shot_window(sid + "b", img_b, box_b, 1520, 1440, 1100, 250, 720)}"""
+        {shot_window(sid + "a", img_a, box_a, *png_size(img_a), 760, 150, 720)}
+        {shot_window(sid + "b", img_b, box_b, *png_size(img_b), 1100, 250, 720)}"""
     elif name == "Terminal":
         lines = [
             ("cmd", "keepwatch awake --for 3h"),

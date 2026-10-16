@@ -203,6 +203,17 @@ final class PowerAssertionTests: XCTestCase {
 final class URLCommandTests: XCTestCase {
     func parse(_ s: String) -> URLCommand? { URL(string: s).flatMap(URLCommand.parse) }
 
+    func testTimerURLs() {
+        XCTAssertEqual(parse("keepwatch://timer?minutes=5"), .timer(minutes: 5))
+        XCTAssertEqual(parse("keepwatch://timer/cancel"), .timerCancel)
+        XCTAssertNil(parse("keepwatch://timer"))
+        XCTAssertNil(parse("keepwatch://timer?minutes=0"))
+        XCTAssertNil(parse("keepwatch://timer?minutes=99999"))
+        XCTAssertEqual(QuickTimer.menuBarText(left: 125), "3m")
+        XCTAssertEqual(QuickTimer.menuBarText(left: 42), "1m", "the menu bar changes once a minute")
+        XCTAssertEqual(QuickTimer.menuBarText(left: .nan), "0m")
+    }
+
     func testParsesCommands() {
         XCTAssertEqual(parse("keepwatch://awake?minutes=90"), .awake(minutes: 90))
         XCTAssertEqual(parse("keepwatch://awake"), .awakeIndefinitely)
@@ -337,6 +348,14 @@ final class ListeningPortsTests: XCTestCase {
 
 final class CLICommandTests: XCTestCase {
     func p(_ s: String) throws -> CLICommand { try CLICommand.parse(s.split(separator: " ").map(String.init)) }
+
+    func testLidStartWithoutAppSaysWhereToGetIt() {
+        let missing = CLICommand.lidNeedsAppMessage(appInstalled: false)
+        XCTAssertTrue(missing.contains("https://github.com/AgentSkillDeck/keepwatch/releases/latest"), missing)
+        XCTAssertTrue(missing.contains("Keepwatch app"), missing)
+        let closed = CLICommand.lidNeedsAppMessage(appInstalled: true)
+        XCTAssertTrue(closed.contains("Open Keepwatch"), closed)
+    }
 
     func testParsesCommands() throws {
         XCTAssertEqual(try CLICommand.parse([]), .help)
@@ -656,5 +675,549 @@ final class DemoDataTests: XCTestCase {
         XCTAssertEqual(Set(DemoData.security.keys), Set(SecurityCheck.allCases))
         XCTAssertEqual(DemoData.batteryHistory(now: now).readings.count, 8)
         XCTAssertTrue(DemoData.privacyLog(now: now).events.allSatisfy { $0.date <= now })
+    }
+}
+
+final class LidSuperviseTests: XCTestCase {
+    let start = Date(timeIntervalSince1970: 1_000_000)
+    var intent: LidModeIntent { LidModeIntent(enabled: true, since: start, expires: start.addingTimeInterval(3_600)) }
+
+    func check(alive: Bool, sleepDisabled: Bool = true, stop: Date? = nil, at offset: TimeInterval) -> LidModeAction {
+        LidModeGuard.supervise(intent: intent, systemSleepDisabled: sleepDisabled, watchdogAlive: alive,
+                               stopRequestedAt: stop, now: start.addingTimeInterval(offset))
+    }
+
+    /// The real failure: sleep stayed off for hours after the watchdog vanished.
+    func testDeadWatchdogWithSleepOffMustRestore() {
+        XCTAssertEqual(check(alive: false, at: 120), .restore(.watchdogStopped))
+        XCTAssertEqual(check(alive: false, at: 20 * 3_600), .restore(.watchdogStopped))
+    }
+
+    func testGivesTheWatchdogTimeToStart() {
+        XCTAssertEqual(check(alive: false, at: 10), .none)
+    }
+
+    func testHealthySessionIsLeftAlone() {
+        XCTAssertEqual(check(alive: true, at: 600), .none)
+        XCTAssertEqual(check(alive: false, sleepDisabled: false, at: 600), .none, "sleep already back on")
+        XCTAssertEqual(LidModeGuard.supervise(intent: .off, systemSleepDisabled: true, watchdogAlive: false,
+                                              stopRequestedAt: nil, now: start), .none)
+    }
+
+    func testUnansweredStopOrDeadlineMeansTheWatchdogIsStuck() {
+        let asked = start.addingTimeInterval(600)
+        XCTAssertEqual(check(alive: true, stop: asked, at: 630), .none, "within one poll")
+        XCTAssertEqual(check(alive: true, stop: asked, at: 700), .restore(.watchdogStopped))
+        XCTAssertEqual(check(alive: true, at: 3_600 + 30), .none)
+        XCTAssertEqual(check(alive: true, at: 3_600 + 120), .restore(.watchdogStopped))
+    }
+}
+
+final class AwakePresetTests: XCTestCase {
+    func testSavedSelectionIsCleanedUp() {
+        XCTAssertEqual(AwakePreset.menuSelection(from: nil), AwakePreset.menuDefaults)
+        XCTAssertEqual(AwakePreset.menuSelection(from: []), AwakePreset.menuDefaults, "never empty")
+        XCTAssertEqual(AwakePreset.menuSelection(from: ["bogus", "d1", "h1", "h1"]), [.h1, .d1], "known, unique, ordered")
+        XCTAssertEqual(AwakePreset.menuSelection(from: AwakePreset.allCases.map(\.rawValue)).count, AwakePreset.menuMax)
+    }
+
+    func testToggleKeepsTheSelectionValid() {
+        XCTAssertEqual(AwakePreset.toggle(.m30, in: [.h1, .h3]), [.m30, .h1, .h3])
+        XCTAssertEqual(AwakePreset.toggle(.h3, in: [.h1, .h3]), [.h1])
+        XCTAssertEqual(AwakePreset.toggle(.h1, in: [.h1]), [.h1], "the last button can't be removed")
+        let full: [AwakePreset] = [.h1, .h3, .h8, .forever]
+        XCTAssertEqual(AwakePreset.toggle(.m30, in: full), full, "adding when full is refused")
+    }
+
+    func testOnlyForeverHasNoLength() {
+        XCTAssertNil(AwakePreset.forever.seconds)
+        XCTAssertTrue(AwakePreset.allCases.filter { $0 != .forever }.allSatisfy { ($0.seconds ?? 0) > 0 })
+    }
+}
+
+final class PrivacyLogPagingTests: XCTestCase {
+    func log(_ n: Int) -> PrivacyLog {
+        PrivacyLog(events: (0..<n).map { PrivacyEvent(date: Date(timeIntervalSince1970: TimeInterval($0)), device: .mic, on: true) })
+    }
+
+    func testPagesAreNewestFirstAndClamped() {
+        let l = log(30)
+        XCTAssertEqual(l.pageCount(size: 12), 3)
+        XCTAssertEqual(l.page(0, size: 12).first?.date.timeIntervalSince1970, 29)
+        XCTAssertEqual(l.page(2, size: 12).count, 6)
+        XCTAssertEqual(l.page(99, size: 12), l.page(2, size: 12), "past the end clamps to the last page")
+        XCTAssertEqual(l.page(-5, size: 12), l.page(0, size: 12))
+    }
+
+    func testEmptyAndBadSizesNeverCrash() {
+        XCTAssertEqual(log(0).pageCount(size: 12), 1)
+        XCTAssertEqual(log(0).page(3, size: 12), [])
+        XCTAssertEqual(log(5).page(0, size: 0), [])
+        XCTAssertEqual(log(5).pageCount(size: -1), 1)
+    }
+}
+
+final class SessionTitlesTests: XCTestCase {
+    func testSessionIDFromArguments() {
+        let id = "C1C79913-F948-4C96-90B4-E55145B36139"
+        XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["--session-id", id, "--agent", "claude"]), id.lowercased())
+        XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["--resume", id]), id.lowercased())
+        XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["--session-id=\(id)"]), id.lowercased())
+        XCTAssertNil(SessionTitles.sessionID(fromArguments: ["--session-id"]), "missing value")
+        XCTAssertNil(SessionTitles.sessionID(fromArguments: ["--session-id", "../../etc/passwd"]), "only UUIDs, never a path")
+    }
+
+    func testProjectDirName() {
+        XCTAssertEqual(SessionTitles.projectDirName(for: "/Users/me/Project/external-source/pdf.craft"),
+                       "-Users-me-Project-external-source-pdf-craft")
+    }
+
+    func testCustomTitleWinsAndNewestIsUsed() {
+        let tail = """
+        ial line cut in half","type":"ai-title"
+        {"type":"ai-title","aiTitle":"first-guess"}
+        {"type":"user","message":"hi"}
+        {"type":"ai-title","aiTitle":"fix-login-redirect"}
+        """
+        XCTAssertEqual(SessionTitles.title(inTranscriptTail: tail[...]), "fix login redirect")
+        let renamed = tail + "\n{\"type\":\"custom-title\",\"customTitle\":\"Checkout bug\"}\n{\"type\":\"ai-title\",\"aiTitle\":\"later\"}"
+        XCTAssertEqual(SessionTitles.title(inTranscriptTail: renamed[...]), "Checkout bug")
+        XCTAssertNil(SessionTitles.title(inTranscriptTail: "{\"type\":\"user\"}"[...]))
+    }
+
+    func testReadsTitleFromDiskAndOnlyGuessesWhenUnambiguous() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kw-titles-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cwd = "/Users/demo/code/api"
+        let dir = root.appendingPathComponent(SessionTitles.projectDirName(for: cwd))
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let a = UUID().uuidString.lowercased(), b = UUID().uuidString.lowercased()
+        try "{\"type\":\"ai-title\",\"aiTitle\":\"with-an-id\"}\n".write(to: dir.appendingPathComponent("\(a).jsonl"), atomically: true, encoding: .utf8)
+        try "{\"type\":\"ai-title\",\"aiTitle\":\"interactive\"}\n".write(to: dir.appendingPathComponent("\(b).jsonl"), atomically: true, encoding: .utf8)
+        let withID = AgentSession(pid: 1, agent: "Claude Code", folder: cwd, sessionID: a)
+        let plain = AgentSession(pid: 2, agent: "Claude Code", folder: cwd)
+        XCTAssertEqual(SessionTitles.titles(for: [withID, plain], projectsDir: root), [1: "with an id", 2: "interactive"])
+        let plain2 = AgentSession(pid: 3, agent: "Claude Code", folder: cwd)
+        XCTAssertEqual(SessionTitles.titles(for: [withID, plain, plain2], projectsDir: root), [1: "with an id"],
+                       "two id-less sessions in one folder: no guessing")
+        XCTAssertEqual(SessionTitles.titles(for: [AgentSession(pid: 4, agent: "Codex", folder: cwd)], projectsDir: root), [:])
+    }
+}
+
+final class UpdateCheckTests: XCTestCase {
+    func json(_ tag: String, _ url: String) -> Data { Data("{\"tag_name\":\"\(tag)\",\"html_url\":\"\(url)\"}".utf8) }
+
+    func testParsesOnlyGitHubPagesAndVersionTags() {
+        let ok = UpdateCheck.parse(json("v0.3.0", "https://github.com/AgentSkillDeck/keepwatch/releases/tag/v0.3.0"))
+        XCTAssertEqual(ok?.version, "0.3.0")
+        XCTAssertNil(UpdateCheck.parse(json("v0.3.0", "https://evil.example/keepwatch")), "never send the user off GitHub")
+        XCTAssertNil(UpdateCheck.parse(json("v0.3.0", "http://github.com/x")), "https only")
+        XCTAssertNil(UpdateCheck.parse(json("latest; rm -rf", "https://github.com/x")))
+        XCTAssertNil(UpdateCheck.parse(Data("not json".utf8)))
+        XCTAssertNil(UpdateCheck.parse(Data(count: 300 * 1024)), "oversized responses are ignored")
+    }
+
+    func testVersionComparison() {
+        XCTAssertTrue(UpdateCheck.isNewer("0.3.0", than: "0.2.0"))
+        XCTAssertTrue(UpdateCheck.isNewer("0.10.0", than: "0.9.9"), "numeric, not text")
+        XCTAssertTrue(UpdateCheck.isNewer("1.0", than: "0.99.1"))
+        XCTAssertFalse(UpdateCheck.isNewer("0.2.0", than: "0.2"))
+        XCTAssertFalse(UpdateCheck.isNewer("0.1.9", than: "0.2.0"))
+        XCTAssertFalse(UpdateCheck.isNewer("garbage", than: "0.2.0"))
+    }
+
+    func testDueOncePerDay() {
+        let now = Date()
+        XCTAssertTrue(UpdateCheck.isDue(lastCheck: nil, now: now))
+        XCTAssertFalse(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(-3_600), now: now))
+        XCTAssertTrue(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(-90_000), now: now))
+        XCTAssertTrue(UpdateCheck.isDue(lastCheck: now.addingTimeInterval(86_400 * 30), now: now), "a clock set back can't block checks")
+    }
+}
+
+final class StayActiveTests: XCTestCase {
+    func nudge(enabled: Bool = true, trusted: Bool = true, lid: Bool = false, idle: TimeInterval?, minutes: Int = 4) -> Bool {
+        StayActive.shouldNudge(enabled: enabled, trusted: trusted, lidSession: lid, idleSeconds: idle, idleMinutes: minutes)
+    }
+
+    func testNudgesOnlyAfterTheIdleLimit() {
+        XCTAssertFalse(nudge(idle: 239))
+        XCTAssertTrue(nudge(idle: 240))
+        XCTAssertTrue(nudge(idle: 130, minutes: 2))
+    }
+
+    func testNeverWhenOffUntrustedUnknownOrLidClosed() {
+        XCTAssertFalse(nudge(enabled: false, idle: 999))
+        XCTAssertFalse(nudge(trusted: false, idle: 999))
+        XCTAssertFalse(nudge(idle: nil))
+        XCTAssertFalse(nudge(idle: .infinity))
+        XCTAssertFalse(nudge(lid: true, idle: 999), "a closed laptop must not look active")
+    }
+
+    func testOutOfRangeMinutesAreClamped() {
+        XCTAssertFalse(nudge(idle: 30, minutes: 0), "0 becomes 1 minute, not every tick")
+        XCTAssertFalse(nudge(idle: 3_000, minutes: 10_000), "capped at an hour")
+        XCTAssertTrue(nudge(idle: 3_600, minutes: 10_000))
+    }
+
+    func testIdleTimeIsReadable() {
+        XCTAssertNotNil(StayActive.idleSeconds())
+    }
+}
+
+final class VersionSyncTests: XCTestCase {
+    /// The CLI prints its own version (Homebrew's test checks it); it must match the app's.
+    func testCLIVersionMatchesInfoPlist() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let plist = try XCTUnwrap(NSDictionary(contentsOf: root.appendingPathComponent("Resources/Info.plist")))
+        let app = try XCTUnwrap(plist["CFBundleShortVersionString"] as? String)
+        let main = try String(contentsOf: root.appendingPathComponent("Sources/KeepwatchCLI/main.swift"), encoding: .utf8)
+        XCTAssertTrue(main.contains("let version = \"\(app)\""), "Sources/KeepwatchCLI/main.swift version must be \(app)")
+        let formula = try String(contentsOf: root.appendingPathComponent("packaging/homebrew/keepwatch-cli.rb"), encoding: .utf8)
+        XCTAssertTrue(formula.contains("v\(app)/keepwatch-cli-\(app)-macos.zip"), "Homebrew formula URL must be \(app)")
+    }
+}
+
+final class ScreenshotToolbarTests: XCTestCase {
+    let laptop = CGRect(x: 0, y: 0, width: 1280, height: 832)
+
+    func testParsesSavedPoint() {
+        XCTAssertEqual(ScreenshotToolbar.parse("{735, -12}"), CGPoint(x: 735, y: -12))
+        XCTAssertNil(ScreenshotToolbar.parse("{735}"))
+        XCTAssertNil(ScreenshotToolbar.parse("{nan, 1}"))
+        XCTAssertNil(ScreenshotToolbar.parse("junk"))
+    }
+
+    func testOffScreenSpots() {
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 735, y: -12), screens: [laptop]), "below the bottom edge")
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 1000, y: 100), screens: [laptop]), "past the right edge")
+        XCTAssertTrue(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 2000, y: 100), screens: [laptop]), "an unplugged display")
+        XCTAssertFalse(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 440, y: 40), screens: [laptop]))
+        XCTAssertFalse(ScreenshotToolbar.isOffScreen(origin: CGPoint(x: 1400, y: 100),
+                                                     screens: [laptop, CGRect(x: 1280, y: 0, width: 1920, height: 1080)]))
+    }
+}
+
+final class MenuSectionTests: XCTestCase {
+    func testSelectionIsCleanedAndOrdered() {
+        XCTAssertEqual(MenuSection.selection(from: nil), MenuSection.defaults)
+        XCTAssertEqual(MenuSection.selection(from: ["memory", "privacy", "bogus", "privacy"]), [.privacy, .memory])
+        XCTAssertEqual(MenuSection.selection(from: []), [], "an empty menu is allowed")
+    }
+
+    func testToggle() {
+        XCTAssertEqual(MenuSection.toggle(.agents, in: MenuSection.defaults), [.privacy, .keepAwake, .timer, .laptopClosed, .agents])
+        XCTAssertEqual(MenuSection.toggle(.timer, in: MenuSection.defaults), [.privacy, .keepAwake, .laptopClosed])
+        XCTAssertEqual(MenuSection.toggle(.privacy, in: [.privacy, .memory]), [.memory])
+    }
+}
+
+final class HostAppTests: XCTestCase {
+    func testWalksUpToTheNearestApp() {
+        let parents: [Int32: Int32] = [500: 400, 400: 300, 300: 200]
+        let chain = HostApp.ancestors(of: 500, parent: { parents[$0] })
+        XCTAssertEqual(chain, [400, 300, 200])
+        XCTAssertEqual(HostApp.host(of: 500, parent: { parents[$0] }, isApp: { $0 == 300 || $0 == 200 }), 300)
+        XCTAssertNil(HostApp.host(of: 500, parent: { parents[$0] }, isApp: { _ in false }))
+    }
+
+    func testCyclesAndDepthAreBounded() {
+        XCTAssertEqual(HostApp.ancestors(of: 1, parent: { $0 == 1 ? 2 : 1 }), [2], "a cycle stops")
+        XCTAssertEqual(HostApp.ancestors(of: 1, parent: { $0 + 1 }).count, HostApp.maxDepth)
+    }
+
+    func testRealParentOfThisProcess() {
+        XCTAssertEqual(HostApp.parentPID(of: getpid()), getppid() > 1 ? getppid() : nil)
+        XCTAssertNil(HostApp.parentPID(of: -5))
+    }
+}
+
+final class AwayLogTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testSummarisesALongAbsence() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 82)
+        log.record(.init(date: t0.addingTimeInterval(600), icon: "checkmark", text: "Claude Code finished"))
+        let s = log.comeBack(at: t0.addingTimeInterval(7_800), battery: 61)
+        XCTAssertEqual(s?.duration, 7_800)
+        XCTAssertEqual(s?.events.map(\.text), ["Claude Code finished"])
+        XCTAssertEqual(s?.batteryUsed, 21)
+        XCTAssertFalse(log.isAway)
+    }
+
+    func testShortQuietAbsenceIsSkipped() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 50)
+        XCTAssertNil(log.comeBack(at: t0.addingTimeInterval(120), battery: 50))
+    }
+
+    func testShortAbsenceWithEventsIsReported() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: nil)
+        log.record(.init(date: t0, icon: "x", text: "Lid session ended"))
+        XCTAssertNotNil(log.comeBack(at: t0.addingTimeInterval(60), battery: nil))
+    }
+
+    func testEventsOnlyWhileAwayAndCharging() {
+        var log = AwayLog()
+        log.record(.init(date: t0, icon: "x", text: "ignored"))
+        log.leave(at: t0, battery: 40)
+        log.leave(at: t0.addingTimeInterval(500), battery: 10) // a second "leave" doesn't restart it
+        let s = log.comeBack(at: t0.addingTimeInterval(3_600), battery: 70)
+        XCTAssertEqual(s?.events, [])
+        XCTAssertNil(s?.batteryUsed, "charged while away")
+        XCTAssertEqual(s?.start, t0)
+        XCTAssertNil(log.comeBack(at: t0, battery: 1), "not away")
+    }
+
+    func testClockGoingBackwardsIsIgnored() {
+        var log = AwayLog()
+        log.leave(at: t0, battery: 1)
+        XCTAssertNil(log.comeBack(at: t0.addingTimeInterval(-50), battery: 1))
+    }
+}
+
+final class AuditLogTests: XCTestCase {
+    func testAppendCleansAndCaps() {
+        var log = AuditLog()
+        log.append("Quit app", "Evil\nName\u{1b}[31m")
+        XCTAssertEqual(log.entries.last?.detail, "Evil Name [31m", "no line breaks or escapes")
+        log.append("x", String(repeating: "a", count: 1_000))
+        XCTAssertEqual(log.entries.last?.detail.count, AuditLog.maxTextLength)
+        for i in 0..<(AuditLog.maxEntries + 5) { log.append("n", "\(i)") }
+        XCTAssertEqual(log.entries.count, AuditLog.maxEntries)
+        XCTAssertEqual(log.entries.last?.detail, "\(AuditLog.maxEntries + 4)", "oldest dropped first")
+    }
+
+    func testPagingNewestFirst() {
+        var log = AuditLog()
+        for i in 0..<25 { log.append("n", "\(i)", at: Date(timeIntervalSince1970: TimeInterval(i))) }
+        XCTAssertEqual(log.page(0, size: 10).first?.detail, "24")
+        XCTAssertEqual(log.page(2, size: 10).count, 5)
+        XCTAssertEqual(log.page(9, size: 10), log.page(2, size: 10))
+        XCTAssertEqual(log.pageCount(size: 10), 3)
+        XCTAssertEqual(AuditLog().page(0, size: 10), [])
+        XCTAssertEqual(log.page(0, size: 0), [])
+    }
+
+    func testSaveLoadIsPrivateAndLenient() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kwa-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("log.json")
+        var log = AuditLog()
+        log.append("Lid session started", "sleep after 3 h", at: Date(timeIntervalSince1970: 100))
+        XCTAssertTrue(log.save(to: url))
+        XCTAssertEqual(AuditLog.load(from: url), log)
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        XCTAssertEqual(mode, 0o600)
+        try Data("garbage".utf8).write(to: url)
+        XCTAssertEqual(AuditLog.load(from: url), AuditLog())
+        XCTAssertEqual(AuditLog.load(from: dir.appendingPathComponent("missing.json")), AuditLog())
+        XCTAssertTrue(log.text().hasSuffix("Lid session started: sleep after 3 h"))
+    }
+}
+
+final class PrivacyUsageTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testPairsOnAndOffPerApp() {
+        let log = PrivacyLog(events: [
+            PrivacyEvent(date: t0, device: .mic, on: true, apps: ["Zoom"]),
+            PrivacyEvent(date: t0.addingTimeInterval(600), device: .mic, on: false),
+            PrivacyEvent(date: t0.addingTimeInterval(700), device: .mic, on: true, apps: ["Zoom"]),
+            PrivacyEvent(date: t0.addingTimeInterval(1_000), device: .mic, on: false),
+            PrivacyEvent(date: t0.addingTimeInterval(100), device: .camera, on: true),
+            PrivacyEvent(date: t0.addingTimeInterval(160), device: .camera, on: false),
+        ])
+        let u = log.usage(since: t0, now: t0.addingTimeInterval(2_000))
+        XCTAssertEqual(u.first, PrivacyUsage(app: "Zoom", device: .mic, sessions: 2, seconds: 900))
+        XCTAssertEqual(u.last, PrivacyUsage(app: PrivacyUsage.unknownCamera, device: .camera, sessions: 1, seconds: 60))
+    }
+
+    func testStillOnCountsToNowAndOldTimeIsCut() {
+        let log = PrivacyLog(events: [
+            PrivacyEvent(date: t0, device: .mic, on: true, apps: ["FaceTime"]),
+            PrivacyEvent(date: t0.addingTimeInterval(-5_000), device: .camera, on: true),
+            PrivacyEvent(date: t0.addingTimeInterval(-4_000), device: .camera, on: false),
+        ])
+        let u = log.usage(since: t0.addingTimeInterval(-100), now: t0.addingTimeInterval(300))
+        XCTAssertEqual(u, [PrivacyUsage(app: "FaceTime", device: .mic, sessions: 1, seconds: 300)], "camera use ended before `since`")
+    }
+
+    func testOffWithoutOnAndEmptyLog() {
+        XCTAssertEqual(PrivacyLog().usage(since: t0, now: t0), [])
+        let log = PrivacyLog(events: [PrivacyEvent(date: t0, device: .mic, on: false)])
+        XCTAssertEqual(log.usage(since: .distantPast, now: t0), [])
+    }
+}
+
+final class ScreenWatchTests: XCTestCase {
+    func testWatchers() {
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["Finder", "replayd"]), [], "replayd always runs; not a signal")
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screensharingd"]), [.remoteViewer])
+        XCTAssertEqual(ScreenWatch.watchers(processNames: ["screencapture"]), [], "your own screenshot isn't a warning")
+    }
+}
+
+final class CodexTitleTests: XCTestCase {
+    func testNamesARunningCodexSessionFromItsRolloutAndIndex() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("kwc-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let now = Date()
+        let c = Calendar(identifier: .gregorian).dateComponents(in: .current, from: now)
+        let day = root.appendingPathComponent(String(format: "sessions/%04d/%02d/%02d", c.year!, c.month!, c.day!))
+        try FileManager.default.createDirectory(at: day, withIntermediateDirectories: true)
+        let id = "01a0e184-3cef-78f2-a3d4-6950a4b03535"
+        try Data(#"{"type":"session_meta","payload":{"id":"\#(id)","cwd":"/work/app"}}"#.utf8 + Data("\n{}\n".utf8))
+            .write(to: day.appendingPathComponent("rollout-x-\(id).jsonl"))
+        try Data(#"""
+        {"id":"\#(id)","thread_name":"Old name"}
+        {"id":"\#(id)","thread_name":"Fix the login page"}
+        {"id":"other","thread_name":"Something else"}
+        """#.utf8).write(to: root.appendingPathComponent("session_index.jsonl"))
+        let running = AgentSession(pid: 7, agent: "Codex", folder: "/work/app", started: now.addingTimeInterval(-60))
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent("none-\(UUID().uuidString)")
+        XCTAssertEqual(SessionTitles.titles(for: [running], projectsDir: empty, codexDir: root, now: now), [7: "Fix the login page"])
+        let elsewhere = AgentSession(pid: 8, agent: "Codex", folder: "/work/other", started: now.addingTimeInterval(-60))
+        XCTAssertEqual(SessionTitles.titles(for: [elsewhere], projectsDir: empty, codexDir: root, now: now), [:], "no file for that folder")
+        let twin = AgentSession(pid: 9, agent: "Codex", folder: "/work/app", started: now.addingTimeInterval(-30))
+        XCTAssertEqual(SessionTitles.titles(for: [running, twin], projectsDir: empty, codexDir: root, now: now), [:],
+                       "two sessions in one folder: no guessing")
+        let resumed = AgentSession(pid: 10, agent: "Codex", folder: "/x", sessionID: id)
+        XCTAssertEqual(SessionTitles.titles(for: [resumed], projectsDir: empty, codexDir: root, now: now), [10: "Fix the login page"])
+        XCTAssertEqual(SessionTitles.sessionID(fromArguments: ["resume", id]), id)
+    }
+}
+
+final class MultiDeviceMuteTests: XCTestCase {
+    func testMutedOnlyWhenEveryMutableMicIsMuted() {
+        XCTAssertEqual(PrivacySnapshot.combinedMute([true, nil, true]), true, "a mic without mute control is ignored")
+        XCTAssertEqual(PrivacySnapshot.combinedMute([true, false]), false, "AirPods still live: not muted")
+        XCTAssertNil(PrivacySnapshot.combinedMute([nil, nil]))
+        XCTAssertNil(PrivacySnapshot.combinedMute([]))
+    }
+
+    /// Read-only: lists this Mac's devices without changing anything.
+    func testLiveSnapshotNamesDevices() {
+        let s = PrivacyMonitor.snapshot()
+        XCTAssertEqual(s.micInUse, !s.liveMics.isEmpty)
+        XCTAssertEqual(s.cameraInUse, !s.liveCameras.isEmpty)
+        XCTAssertFalse(s.liveMics.contains(""))
+    }
+}
+
+final class InterpretedAgentTests: XCTestCase {
+    let m = AgentMatcher()
+    func agent(_ name: String, _ args: [String]) -> String? { m.agentName(for: RunningProcess(pid: 5, name: name, arguments: args)) }
+
+    func testAgentsRunThroughNodeOrPython() {
+        XCTAssertEqual(agent("node", ["/opt/homebrew/bin/gemini"]), "Gemini CLI")
+        XCTAssertEqual(agent("node", ["--no-warnings", "/usr/local/lib/node_modules/@google/gemini-cli/dist/index.js"]), "Gemini CLI")
+        XCTAssertEqual(agent("node", ["/Users/me/.npm-global/lib/node_modules/@qwen-code/qwen-code/cli.js"]), "Qwen Code")
+        XCTAssertEqual(agent("node", ["/opt/homebrew/lib/node_modules/@sourcegraph/amp/dist/main.js"]), "Amp")
+        XCTAssertEqual(agent("node", ["/Users/me/.local/bin/cursor-agent"]), "Cursor Agent")
+        XCTAssertEqual(agent("node", ["/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js"]), "Claude Code")
+        XCTAssertEqual(agent("python3", ["/Users/me/.local/bin/aider", "--model", "x"]), "Aider")
+        XCTAssertEqual(agent("Python", ["-m", "aider"]), "Aider")
+        XCTAssertEqual(agent("bun", ["/Users/me/.bun/bin/opencode"]), "OpenCode")
+    }
+
+    func testOtherScriptsAreNotAgents() {
+        XCTAssertNil(agent("node", ["server.js", "--name", "gemini"]), "only the script decides, not its arguments")
+        XCTAssertNil(agent("node", ["/app/node_modules/.bin/vite"]))
+        XCTAssertNil(agent("python3", ["-m", "http.server"]))
+        XCTAssertNil(agent("node", []))
+        XCTAssertNil(agent("Cursor", []), "the Cursor editor itself is an app, not an agent session")
+        XCTAssertNil(agent("node", ["/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js", "--bg-spare"]),
+                     "idle helpers stay ignored when run through node")
+    }
+
+    func testCandidateIncludesRuntimes() {
+        XCTAssertTrue(m.isCandidate("node"))
+        XCTAssertTrue(m.isCandidate("claude"))
+        XCTAssertFalse(m.isCandidate("Finder"))
+    }
+}
+
+final class QuickTimerTests: XCTestCase {
+    let t0 = Date(timeIntervalSince1970: 1_000_000)
+
+    func testCountdownText() throws {
+        let t = try XCTUnwrap(QuickTimer(minutes: 25, now: t0, keepAwake: true))
+        XCTAssertEqual(t.menuBarText(at: t0), "25m")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(24 * 60 + 15)), "1m")
+        XCTAssertEqual(t.menuBarText(at: t0.addingTimeInterval(3_000)), "0m")
+        XCTAssertTrue(t.isDone(at: t0.addingTimeInterval(1_500)))
+        XCTAssertFalse(t.isDone(at: t0.addingTimeInterval(1_499)))
+        XCTAssertEqual(QuickTimer(minutes: 90, now: t0, keepAwake: false)?.menuBarText(at: t0), "1h30")
+        XCTAssertEqual(QuickTimer(minutes: 60, now: t0, keepAwake: false)?.menuBarText(at: t0), "1h")
+    }
+
+    func testRejectsBadLengths() {
+        XCTAssertNil(QuickTimer(minutes: 0, now: t0, keepAwake: true))
+        XCTAssertNil(QuickTimer(minutes: -5, now: t0, keepAwake: true))
+        XCTAssertNil(QuickTimer(minutes: QuickTimer.maxMinutes + 1, now: t0, keepAwake: true))
+    }
+}
+
+final class DiskSpaceTests: XCTestCase {
+    func testWarnOncePerDayBelowThreshold() {
+        let now = Date()
+        XCTAssertTrue(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: nil, now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 40_000_000_000, thresholdGB: 10, lastWarned: nil, now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: now.addingTimeInterval(-3_600), now: now))
+        XCTAssertTrue(DiskSpace.shouldWarn(available: 4_000_000_000, thresholdGB: 10, lastWarned: now.addingTimeInterval(-90_000), now: now))
+        XCTAssertFalse(DiskSpace.shouldWarn(available: 0, thresholdGB: 0, lastWarned: nil, now: now), "0 = off")
+    }
+
+    func testFolderSizeAndSpots() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("kwd-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let dl = home.appendingPathComponent(".npm/sub")
+        try FileManager.default.createDirectory(at: dl, withIntermediateDirectories: true)
+        try Data(count: 200_000).write(to: dl.appendingPathComponent("big.bin"))
+        try FileManager.default.createDirectory(at: home.appendingPathComponent("Downloads"), withIntermediateDirectories: true)
+        try Data(count: 300_000).write(to: home.appendingPathComponent("Downloads/big.bin"))
+        XCTAssertGreaterThanOrEqual(DiskSpace.folderSize(home.appendingPathComponent(".npm")), 200_000)
+        let spots = DiskSpace.spots(home: home)
+        XCTAssertEqual(spots.map(\.name), ["npm cache"], "missing and empty folders are skipped; Downloads is never read")
+        XCTAssertEqual(DiskSpace.folderSize(home.appendingPathComponent("nope")), 0)
+        XCTAssertNotNil(DiskSpace.usage())
+        XCTAssertEqual(DiskSpace.Usage(available: 0, total: 0).usedFraction, 0)
+    }
+}
+
+final class StartupItemsTests: XCTestCase {
+    func testScanReadsPlistsLenientlyAndFlagsNewOnes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("kws-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let good: [String: Any] = ["Label": "com.example.sync", "ProgramArguments": ["/Applications/Sync.app/Contents/MacOS/sync", "--bg"], "RunAtLoad": true]
+        try PropertyListSerialization.data(fromPropertyList: good, format: .xml, options: 0)
+            .write(to: dir.appendingPathComponent("com.example.sync.plist"))
+        try Data("not a plist".utf8).write(to: dir.appendingPathComponent("broken.thing.plist"))
+        try Data("x".utf8).write(to: dir.appendingPathComponent("readme.txt"))
+        let items = StartupItems.scan([(dir, .user)])
+        XCTAssertEqual(items.count, 2)
+        let sync = try XCTUnwrap(items.first { $0.label == "com.example.sync" })
+        XCTAssertEqual(sync.name, "sync")
+        XCTAssertTrue(sync.runAtLoad)
+        XCTAssertEqual(items.first { $0.label == "broken.thing" }?.program, nil, "damaged file still listed")
+        XCTAssertEqual(StartupItems.newItems(items, seen: nil), [], "first scan: nothing is new")
+        XCTAssertEqual(StartupItems.newItems(items, seen: [sync.path]).map(\.label), ["broken.thing"])
+        XCTAssertEqual(StartupItems.scan([(dir.appendingPathComponent("missing"), .user)]), [])
+    }
+}
+
+final class AgentBudgetTests: XCTestCase {
+    func testOverLimit() {
+        let now = Date()
+        let old = AgentSession(pid: 1, agent: "Codex", started: now.addingTimeInterval(-5 * 3_600))
+        let young = AgentSession(pid: 2, agent: "Codex", started: now.addingTimeInterval(-600))
+        let unknown = AgentSession(pid: 3, agent: "Codex")
+        XCTAssertEqual(AgentBudget.overLimit([old, young, unknown], limitHours: 4, handled: [], now: now).map(\.pid), [1])
+        XCTAssertEqual(AgentBudget.overLimit([old], limitHours: 4, handled: [1], now: now), [], "warned once")
+        XCTAssertEqual(AgentBudget.overLimit([old], limitHours: 0, handled: [], now: now), [], "0 = off")
     }
 }

@@ -4,7 +4,7 @@ import KeepwatchCore
 
 // `keepwatch`: the command line for people and AI agents. See CLICommand.usage.
 
-let version = "0.2.0"
+let version = "0.3.0"
 let appBundleID = "app.keepwatch.Keepwatch"
 
 func out(_ s: String) { FileHandle.standardOutput.write(Data((s + "\n").utf8)) }
@@ -76,10 +76,12 @@ func agentRows() -> [AgentRow] {
     let start = Date()
     if !sessions.isEmpty { Thread.sleep(forTimeInterval: 1) }
     let elapsed = Date().timeIntervalSince(start)
+    let titles = SessionTitles.titles(for: sessions)
     return sessions.map { s in
         let used = (ProcessList.cpuSeconds(of: s.pid) ?? 0) - (first[s.pid] ?? 0)
         return AgentRow(agent: s.agent, pid: s.pid, folder: s.folder, started: s.started,
-                        activity: AgentActivity.classify(cpuSeconds: used, over: elapsed).rawValue)
+                        activity: AgentActivity.classify(cpuSeconds: used, over: elapsed).rawValue,
+                        title: titles[s.pid])
     }
 }
 
@@ -89,6 +91,8 @@ struct AgentRow: Encodable {
     var folder: String?
     var started: Date?
     var activity: String
+    /// The session's name, when the agent records one (added in 0.3).
+    var title: String?
 }
 
 func run(_ command: CLICommand) -> Int32 {
@@ -105,7 +109,7 @@ func run(_ command: CLICommand) -> Int32 {
         } else {
             for r in rows {
                 let folder = r.folder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "?"
-                out("\(r.agent)  pid \(r.pid)  \(r.activity)  \(folder)")
+                out("\(r.agent)  pid \(r.pid)  \(r.activity)  \(folder)" + (r.title.map { "  “\($0)”" } ?? ""))
             }
         }
         return 0
@@ -163,7 +167,10 @@ func run(_ command: CLICommand) -> Int32 {
         }
         return 0
     case .lidStart(let hours):
-        guard appRunning() else { err("open the Keepwatch app first; it shows the password prompt"); return 2 }
+        guard appRunning() else {
+            let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appBundleID) != nil
+            err(CLICommand.lidNeedsAppMessage(appInstalled: installed)); return 2
+        }
         var info: [String: Any] = [:]
         if let hours { info["hours"] = hours }
         DistributedNotificationCenter.default().postNotificationName(

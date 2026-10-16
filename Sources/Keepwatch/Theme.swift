@@ -38,13 +38,19 @@ struct SectionHeader: View {
     var subtitle: String?
     var tint: Color = Brand.teal
 
+    /// A heading, not a row: a small inline icon, bold title and a rule
+    /// under it, so it can't be mistaken for one of the switches below.
     var body: some View {
-        HStack(spacing: 10) {
-            IconBadge(icon: icon, tint: tint)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title).font(.system(.headline, design: .rounded))
-                if let subtitle { Text(subtitle).font(.caption).foregroundStyle(.secondary) }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                Image(systemName: icon).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
+                Text(title).font(.system(size: 15, weight: .bold, design: .rounded))
             }
+            if let subtitle {
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 1)
         }
     }
 }
@@ -74,6 +80,45 @@ struct Eyebrow: View {
     }
 }
 
+/// A menu section heading with an ⓘ button that shows a one-line
+/// explanation underneath (hover tooltips don't show in the menu panel).
+struct MenuHeading<Trailing: View>: View {
+    var title: String
+    var info: String
+    @ViewBuilder var trailing: Trailing
+    @State private var showInfo = false
+
+    init(_ title: String, info: String, @ViewBuilder trailing: () -> Trailing = { EmptyView() }) {
+        self.title = title
+        self.info = info
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Eyebrow(text: title)
+                Button { withAnimation(.snappy(duration: 0.2)) { showInfo.toggle() } } label: {
+                    Image(systemName: showInfo ? "info.circle.fill" : "info.circle").font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(showInfo ? Brand.teal : Color.secondary)
+                .accessibilityLabel("About \(title)")
+                Spacer(minLength: 4)
+                trailing
+            }
+            if showInfo {
+                Text(info).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.05)))
+                    .transition(.opacity)
+            }
+        }
+    }
+}
+
 /// A selectable tile: a big value and a small caption.
 struct TileButtonStyle: ButtonStyle {
     var selected: Bool
@@ -92,6 +137,24 @@ struct TileButtonStyle: ButtonStyle {
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
             .contentShape(Rectangle())
+    }
+}
+
+/// A small capsule button that hugs its label, for rows of choices.
+struct ChipButtonStyle: ButtonStyle {
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .semibold, design: .rounded))
+            .padding(.horizontal, 12).frame(minWidth: 44, minHeight: 28)
+            .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
+            .background(Capsule().fill(selected ? AnyShapeStyle(Brand.teal)
+                                                : AnyShapeStyle(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.07))))
+            .overlay(Capsule().strokeBorder(selected ? Color.clear : Color.primary.opacity(0.06)))
+            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .contentShape(Capsule())
     }
 }
 
@@ -146,32 +209,50 @@ struct StatusOrb: View {
 
 /// A big value with a caption, for the dashboard summary. Every tile uses
 /// the same three rows (icon, value, caption) so tiles line up across a row.
+/// A summary tile: icon and label on top, the value below, and for
+/// percentages a thin bar. Warnings tint the value and the bar.
 struct StatTile<Icon: View>: View {
     var value: String
     var caption: String
     var tint: Color = Brand.teal
+    /// 0...1 draws a bar under the value.
+    var fraction: Double?
     @ViewBuilder var icon: Icon
+    @State private var hovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            icon.frame(height: 24, alignment: .leading)
-            Spacer(minLength: 6)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                icon.frame(height: 18, alignment: .leading)
+                Text(caption).font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            Spacer(minLength: 0)
             Text(value)
-                .font(.system(size: 22, weight: .semibold, design: .rounded)).monospacedDigit()
+                .font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
                 .foregroundStyle(tint == Brand.teal ? Color.primary : tint)
                 .lineLimit(1).minimumScaleFactor(0.6)
-            Text(caption).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
-                .padding(.top, 2)
+            if let fraction {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(tint).frame(width: geo.size.width * min(max(fraction, 0), 1))
+                    }
+                }
+                .frame(height: 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .padding(12)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(10)
+        .background(Color.primary.opacity(hovering ? 0.09 : 0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .onHover { hovering = $0 }
     }
 }
 
 extension StatTile where Icon == TileSymbol {
-    init(value: String, caption: String, icon: String, tint: Color = Brand.teal) {
-        self.init(value: value, caption: caption, tint: tint) { TileSymbol(name: icon, tint: tint) }
+    init(value: String, caption: String, icon: String, tint: Color = Brand.teal, fraction: Double? = nil) {
+        self.init(value: value, caption: caption, tint: tint, fraction: fraction) { TileSymbol(name: icon, tint: tint) }
     }
 }
 
@@ -179,7 +260,7 @@ struct TileSymbol: View {
     var name: String
     var tint: Color
     var body: some View {
-        Image(systemName: name).font(.system(size: 15, weight: .semibold)).foregroundStyle(tint)
+        Image(systemName: name).font(.system(size: 13, weight: .semibold)).foregroundStyle(tint)
     }
 }
 

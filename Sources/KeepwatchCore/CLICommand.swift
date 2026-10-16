@@ -161,6 +161,17 @@ public enum CLICommand: Equatable, Sendable {
         default: nil
         }
     }
+
+    /// Where people get the app. The CLI can be installed on its own, without it.
+    public static let appDownloadURL = "https://github.com/AgentSkillDeck/keepwatch/releases/latest"
+
+    /// What `lid start` prints when the app isn't running. Only the app can start
+    /// a lid session: it shows the password prompt and runs the watchdog.
+    public static func lidNeedsAppMessage(appInstalled: Bool) -> String {
+        appInstalled
+            ? "lid sessions need the Keepwatch app, which shows the password prompt. Open Keepwatch, then run this again."
+            : "lid sessions need the Keepwatch app, which isn't installed. Get it from \(appDownloadURL), open it, then run this again."
+    }
 }
 
 /// Machine-readable status for `keepwatch status --json`. Field names are a

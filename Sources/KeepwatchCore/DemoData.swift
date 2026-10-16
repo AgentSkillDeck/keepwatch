@@ -13,6 +13,9 @@ public enum DemoData {
         ]
     }
 
+    /// Session names, as Claude Code titles them.
+    public static let titles: [Int32: String] = [41_201: "Fix the checkout redirect", 41_377: "Add rate limits to the API"]
+
     /// Session pid → working or idle; one is idle so both states show.
     public static let activity: [Int32: AgentActivity] = [41_201: .working, 41_377: .idle, 42_010: .working, 42_455: .working]
 
@@ -66,5 +69,40 @@ public enum DemoData {
                                   cycles: 214 - week * 6)
         }
         return BatteryHistory(readings: readings)
+    }
+
+    public static func awaySummary(now: Date) -> AwayLog.Summary {
+        AwayLog.Summary(start: now.addingTimeInterval(-2 * 3_600 - 10 * 60), end: now, events: [
+            .init(date: now.addingTimeInterval(-95 * 60), icon: "hourglass", text: "“Fix the checkout redirect” went quiet"),
+            .init(date: now.addingTimeInterval(-40 * 60), icon: "checkmark.circle.fill", text: "Codex finished"),
+        ], batteryStart: 96, batteryEnd: 82)
+    }
+
+    public static let disk = DiskSpace.Usage(available: 182_000_000_000, total: 494_000_000_000)
+
+    public static let storageSpots: [DiskSpace.Spot] = [
+        DiskSpace.Spot(name: "Simulators", url: URL(fileURLWithPath: "/Users/demo/Library/Developer/CoreSimulator"), bytes: 38_400_000_000),
+        DiskSpace.Spot(name: "Xcode build files", url: URL(fileURLWithPath: "/Users/demo/Library/Developer/Xcode/DerivedData"), bytes: 21_700_000_000),
+        DiskSpace.Spot(name: "App caches", url: URL(fileURLWithPath: "/Users/demo/Library/Caches"), bytes: 9_300_000_000),
+        DiskSpace.Spot(name: "npm cache", url: URL(fileURLWithPath: "/Users/demo/.npm"), bytes: 2_100_000_000),
+    ]
+
+    public static let startupItems: [StartupItem] = [
+        StartupItem(label: "dev.example.sync-helper", program: "/Users/demo/bin/sync-helper",
+                    path: "/Users/demo/Library/LaunchAgents/dev.example.sync-helper.plist", domain: .user, runAtLoad: true),
+        StartupItem(label: "org.example.updater", program: "/Library/Application Support/Example/updater",
+                    path: "/Library/LaunchAgents/org.example.updater.plist", domain: .allUsers, runAtLoad: true),
+        StartupItem(label: "org.example.vpn-daemon", program: "/Library/PrivilegedHelperTools/vpn-daemon",
+                    path: "/Library/LaunchDaemons/org.example.vpn-daemon.plist", domain: .system, runAtLoad: true),
+    ]
+
+    public static func auditLog(now: Date) -> AuditLog {
+        var log = AuditLog()
+        log.append("Keep awake", "until 5:00 PM", at: now.addingTimeInterval(-3 * 3_600))
+        log.append("Lid session started", "sleep after 3 h closed", at: now.addingTimeInterval(-2 * 3_600))
+        log.append("Microphone muted", "lid closed", at: now.addingTimeInterval(-2 * 3_600 + 60))
+        log.append("Lid session end requested", "all agents finished", at: now.addingTimeInterval(-30 * 60))
+        log.append("Quit app", "Music", at: now.addingTimeInterval(-5 * 60))
+        return log
     }
 }
