@@ -559,9 +559,11 @@ struct PortsList: View {
         }
         .onAppear { model.refreshPorts() }
         .confirmationDialog(confirming.map { "Stop \($0.process) on port \(String($0.port))?" } ?? "",
-                            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
-            Button("Stop process", role: .destructive) { if let p = confirming { model.stopProcess(p) } }
-        } message: {
+                            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                            presenting: confirming) { p in
+            // Use the presented value: the dialog clears `confirming` before this runs.
+            Button("Stop process", role: .destructive) { model.stopProcess(p) }
+        } message: { _ in
             Text("Sends it a normal quit signal. Unsaved work in that process may be lost.")
         }
     }
@@ -618,12 +620,12 @@ struct AgentSessionsList: View {
                 .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
         }
-        .confirmationDialog(title, isPresented: Binding(get: { !confirming.isEmpty }, set: { if !$0 { confirming = [] } })) {
-            Button(confirming.count > 1 ? "Stop \(confirming.count) sessions" : "Stop session", role: .destructive) {
-                for s in confirming { model.stopAgent(s) }
-                confirming = []
+        .confirmationDialog(title, isPresented: Binding(get: { !confirming.isEmpty }, set: { if !$0 { confirming = [] } }),
+                            presenting: confirming) { sessions in
+            Button(sessions.count > 1 ? "Stop \(sessions.count) sessions" : "Stop session", role: .destructive) {
+                for s in sessions { model.stopAgent(s) }
             }
-        } message: {
+        } message: { _ in
             Text("Unsaved work in the session may be lost.")
         }
     }
@@ -767,9 +769,10 @@ struct TopAppsList: View {
         .onAppear { model.refreshTopApps() }
         .onReceive(timer) { _ in model.refreshTopApps() }
         .confirmationDialog(confirming.map { "Quit \($0.name)?" } ?? "",
-                            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
-            Button("Quit", role: .destructive) { if let a = confirming { model.quitApp(a) } }
-        } message: {
+                            isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                            presenting: confirming) { app in
+            Button("Quit", role: .destructive) { model.quitApp(app) }
+        } message: { _ in
             Text("Like pressing ⌘Q in the app. It may ask you to save your work.")
         }
     }
