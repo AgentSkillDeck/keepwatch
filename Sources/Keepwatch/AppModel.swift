@@ -198,7 +198,7 @@ final class AppModel: ObservableObject {
         }
         checkLidSessionOnLaunch()
         if stayActive && !AXIsProcessTrusted() {
-            banner = Banner(text: "Stay active needs Keepwatch turned on in Accessibility. If it is already on, turn it off and on again (macOS keeps the old app's permission after an update).",
+            banner = Banner(text: "Stay active needs Accessibility. Already on? Turn it off and on again.",
                             action: .openAccessibility)
             requestAccessibility()
         }
@@ -563,10 +563,10 @@ final class AppModel: ObservableObject {
         case .none:
             if lidIntent.enabled && !(pmset?.sleepDisabled ?? false) { saveIntent(.off) }
         case .restore:
-            banner = Banner(text: "Sleep is still turned off from an earlier lid session (the Mac probably restarted). Turn it back on?",
+            banner = Banner(text: "Sleep is still off from an earlier lid session. Turn it back on?",
                             action: .restoreSleep)
         case .askAboutForeignSetting:
-            banner = Banner(text: "Sleep is turned off system-wide, but not by Keepwatch. Your Mac won't sleep even with the lid closed.",
+            banner = Banner(text: "Sleep is off, but not by Keepwatch. Your Mac won't sleep.",
                             action: .restoreSleep)
         }
     }
@@ -613,7 +613,7 @@ final class AppModel: ObservableObject {
                                             watchdogAlive: alive, stopRequestedAt: lidStopRequestedAt, now: now)
         guard case .restore = action else { return }
         lidRescuePrompted = true
-        banner = Banner(text: "Sleep is still off, but the lid session stopped working. Turn sleep back on.",
+        banner = Banner(text: "The lid session stopped. Turn sleep back on.",
                         action: .restoreSleep)
         notify("Your Mac can't sleep", "The lid session stopped working. Type your password to turn sleep back on.")
         restoreSleepNow()

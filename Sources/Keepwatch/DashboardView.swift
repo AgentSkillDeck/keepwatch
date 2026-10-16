@@ -68,7 +68,7 @@ struct DashboardView: View {
 
     private var lidOpenCard: some View {
         Card("Laptop open", icon: "eye.fill",
-             subtitle: "Your Mac won't sleep while you're away. Closing the lid still sleeps it. No password.") {
+             subtitle: "No sleep while the lid is open. No password.") {
             AwakeControls()
             StayActiveRow()
             SwitchRow(icon: "display", title: "Keep screen on",
@@ -137,7 +137,7 @@ struct DashboardView: View {
                         options: ["Laptop open", "Laptop closed"])
                 if tab == .lid || awakeSub == "Laptop closed" {
                     Card("Laptop closed", icon: "laptopcomputer.slash",
-                         subtitle: "Keeps working with the lid shut, then sleeps by itself. Asks for your password to start.") {
+                         subtitle: "Runs with the lid shut, then sleeps by itself. Password to start.") {
                         LidSessionCard(compact: false)
                     }
                 } else {
@@ -191,7 +191,7 @@ struct DashboardView: View {
                 case "Menu": MenuButtonsCard()
                 case "Mac tweaks":
                     Card("Mac tweaks", icon: "wand.and.stars") {
-                        Text("Shortcuts to macOS settings. Each one changes only that setting and can be turned back.")
+                        Text("Quick macOS settings. Each can be turned back.")
                             .font(.caption).foregroundStyle(.secondary)
                         ForEach(QuickToggle.allCases) { t in
                             SwitchRow(icon: t.icon, title: t.title,
@@ -272,7 +272,7 @@ struct CameraResetRow: View {
         .confirmationDialog("Take camera access away from every app?", isPresented: $confirming) {
             Button("Reset camera access", role: .destructive) { model.resetCameraPermissions() }
         } message: {
-            Text("Each app will have to ask you again before it can use the camera. Apps that are open keep access until you quit them. This can't be undone with one click.")
+            Text("Every app must ask again. Open apps keep access until they quit.")
         }
     }
 }
@@ -858,7 +858,7 @@ struct BatteryHistoryView: View {
                 fact("80%", "Worn below")
             }
             if points.count < 2 {
-                Label("Keepwatch saves one reading a day, so the chart fills in over the next few days.", systemImage: "calendar")
+                Label("One reading a day; the chart fills in over a few days.", systemImage: "calendar")
                     .font(.callout).foregroundStyle(.secondary)
             } else {
                 let lowest = min(points.map(\.health).min() ?? 80, 80)
@@ -928,7 +928,7 @@ struct MenuButtonsCard: View {
 
     var body: some View {
         Card("What the menu shows", icon: "menubar.rectangle") {
-            Text("Choose what appears in the small window under the menu-bar icon. The status and the bottom buttons always show.")
+            Text("Pick what the menu-bar window shows.")
                 .font(.caption).foregroundStyle(.secondary)
             ForEach(MenuSection.allCases) { section in
                 SwitchRow(icon: section.icon, title: section.title,
@@ -970,7 +970,7 @@ struct PrivacyByApp: View {
                         .frame(minWidth: 80, alignment: .trailing)
                 }
             }
-            Text("Keepwatch records this only while it is running. macOS doesn't say which app uses the camera.")
+            Text("Recorded while Keepwatch runs.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }
@@ -985,7 +985,7 @@ struct ActivityLogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Every change Keepwatch makes to your Mac or other apps: sleep settings, lid sessions, the mic, quitting apps, stopping processes, Mac tweaks, updates and permissions. Kept on this Mac only (readable by you alone), up to \(AuditLog.maxEntries) entries.")
+            Text("Everything Keepwatch changed on this Mac. Stays on this Mac.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if model.auditLog.entries.isEmpty {
                 Text("Nothing yet.").font(.callout).foregroundStyle(.secondary)
@@ -1087,7 +1087,7 @@ struct AboutCard: View {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             }
             SwitchRow(icon: "arrow.triangle.2.circlepath", title: "Check for updates once a day",
-                      subtitle: "Off by default. Asks GitHub for the latest version number; nothing else is sent. Updates install only when you click Install.",
+                      subtitle: "Asks GitHub for the latest version. Nothing else is sent.",
                       isOn: $model.autoCheckUpdates)
         }
     }
@@ -1101,7 +1101,7 @@ struct StayActiveRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             SwitchRow(icon: "cursorarrow.motionlines", title: "Stay active in chat apps",
-                      subtitle: "Slack, Teams, Zoom and others won't show you as away. Moves the pointer 1 pixel when you're idle; never clicks or types.",
+                      subtitle: "Slack, Teams and Zoom won't show you as away.",
                       isOn: $model.stayActive)
             if model.stayActive {
                 HStack(spacing: 6) {

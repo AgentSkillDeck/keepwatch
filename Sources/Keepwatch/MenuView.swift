@@ -62,7 +62,7 @@ struct MenuAgents: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MenuHeading("Agent sessions", info: "AI coding agents running on this Mac: Claude Code, Codex, Gemini CLI, Aider, OpenCode, Goose, Amp, Cursor Agent, Qwen Code and Crush. Claude Code and Codex sessions show their name; the others show their folder. Click ⊗ twice to stop one.")
+            MenuHeading("Agent sessions", info: "Claude Code, Codex, Gemini and other agents. Click ⊗ twice to stop one.")
             if model.agentSessions.isEmpty {
                 Text("No agents running.").font(.caption).foregroundStyle(.secondary)
             }
@@ -121,7 +121,7 @@ struct MenuMemory: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            MenuHeading("Using the most memory", info: "The three apps using the most memory right now. Open the Dashboard › Apps to see more or quit one.")
+            MenuHeading("Using the most memory", info: "Top 3 by memory. Click ⊗ twice to quit one.")
             if model.topApps.isEmpty { Text("Reading memory use…").font(.caption).foregroundStyle(.secondary) }
             ForEach(model.topApps.prefix(3)) { app in
                 HStack(spacing: 8) {
@@ -299,7 +299,7 @@ struct PrivacySwitches: View {
     /// The menu: mic and camera side by side, alerts as a small switch.
     private var compactBody: some View {
         VStack(alignment: .leading, spacing: 8) {
-            MenuHeading("Privacy", info: "Red means live. Click Mic to mute or unmute it for every app. When the camera is live, click it to open the Camera list, where you can switch the app off. Screen turns red while someone is connected with Screen Sharing. The bell sends an alert when any of them turns on.") {
+            MenuHeading("Privacy", info: "Red means live. Click a tile to mute or stop it.") {
                 Button { model.alertOnMicCamera.toggle() } label: {
                     Label(model.alertOnMicCamera ? "Alerts on" : "Alerts off",
                           systemImage: model.alertOnMicCamera ? "bell.fill" : "bell.slash")
@@ -317,7 +317,7 @@ struct PrivacySwitches: View {
                             state: model.privacy.cameraInUse ? "Live" : "Off", live: model.privacy.cameraInUse,
                             action: model.privacy.cameraInUse ? { model.open(.camera) } : nil)
                     .help(model.privacy.cameraInUse
-                          ? "Opens the Camera list in System Settings. Switch the app off there to stop it."
+                          ? "Open the Camera list to switch the app off"
                           : "No app is using the camera")
                 let shared = model.screenWatchers.contains(.remoteViewer)
                 PrivacyTile(icon: shared ? "rectangle.on.rectangle" : "lock.display", title: "Screen",
@@ -356,7 +356,7 @@ struct PrivacySwitches: View {
                     // permission is the real "stop", and it lives in Settings.
                     Button("Turn off…") { model.open(.camera) }
                         .controlSize(.small)
-                        .help("Opens the Camera list in System Settings. Switch the app off there to stop it using the camera.")
+                        .help("Open the Camera list to switch the app off")
                 }
                 Text(model.privacy.cameraInUse ? "LIVE" : "OFF")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -364,7 +364,7 @@ struct PrivacySwitches: View {
                     .foregroundStyle(model.privacy.cameraInUse ? Brand.live : Color.secondary)
                     .background((model.privacy.cameraInUse ? Brand.live : Color.primary).opacity(0.12), in: Capsule())
             }
-            .help("macOS has no switch that turns the camera off for every app. Keepwatch shows when it's on and can alert you.")
+            .help("macOS has no camera off switch for all apps")
             SwitchRow(icon: "bell.badge", title: "Alert me",
                       subtitle: "When the mic or camera turns on", isOn: $model.alertOnMicCamera)
             ScreenWatchRows()
@@ -505,7 +505,7 @@ struct AwakeControls: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-            MenuHeading("Keep awake", info: "Stops your Mac sleeping while the laptop is open, for the time you pick (⋯ has more lengths and a custom time). Closing the lid still sleeps it; use Laptop closed for that. “While AI agents run” keeps it awake only until your agents finish. No password.") {
+            MenuHeading("Keep awake", info: "No sleep while the lid is open. No password.") {
                 if isTimedOrForever {
                     Button("Turn off") { model.setMode(.off) }
                         .buttonStyle(.borderless).font(.caption.weight(.semibold))
@@ -668,7 +668,7 @@ struct LidSessionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if compact {
-                MenuHeading("Laptop closed", info: "Keeps working with the lid shut, for example in your bag. Pick how long it may stay closed, then Start. It asks for your password once, then sleeps by itself when the time is up, the battery is low, it gets hot, or (if you chose) your agents finish.") {
+                MenuHeading("Laptop closed", info: "Runs with the lid shut, then sleeps by itself. Password to start.") {
                     if model.lidIntent.enabled, let end = model.lidIntent.expires {
                         Text("until \(end.formatted(date: .omitted, time: .shortened)) at most")
                             .font(.caption).foregroundStyle(.secondary)
@@ -704,7 +704,7 @@ struct LidSessionCard: View {
                         Label("Ending… turn sleep on now", systemImage: "moon.zzz.fill").frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .help("Sleep should come back within 30 seconds. If it doesn't, this turns it on with your password.")
+                    .help("Turns sleep on now (asks for your password)")
                 } else {
                     Button { model.endLidSession(reason: "you ended it") } label: {
                         Label("End lid session", systemImage: "stop.circle.fill").frame(maxWidth: .infinity)
@@ -776,7 +776,7 @@ struct LidSessionCard: View {
                               subtitle: "Then the Mac sleeps", isOn: $model.endLidSessionWhenAgentsFinish)
                 }
                 if !compact && !model.launchAtLogin {
-                    Text("Tip: turn on “Open Keepwatch at login”. If the Mac restarts mid-session, that lets Keepwatch turn sleep back on.")
+                    Text("Tip: turn on “Open Keepwatch at login” in case the Mac restarts.")
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
