@@ -6,3 +6,6 @@ dist/
 DerivedData/
 .DS_Store
 /dist
+/cross/target/
+/cross/.smoke/
+/cross/dist/

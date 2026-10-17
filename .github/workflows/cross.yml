@@ -1,0 +1,50 @@
+name: cross
+on:
+  push:
+    paths: ["cross/**", ".github/workflows/cross.yml"]
+  pull_request:
+    paths: ["cross/**", ".github/workflows/cross.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+defaults:
+  run:
+    working-directory: cross
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: keepwatch-linux-x86_64
+            binary: keepwatch
+          - os: windows-latest
+            artifact: keepwatch-windows-x86_64.exe
+            binary: keepwatch.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: rustup update stable && rustup default stable && rustup component add clippy rustfmt
+      - run: cargo fmt --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo build --locked --release
+      - name: Smoke test
+        shell: bash
+        run: |
+          bin=target/release/${{ matrix.binary }}
+          "$bin" version
+          "$bin" status --json
+          "$bin" agents --json
+          "$bin" ports --json
+      - name: Name the binary
+        shell: bash
+        run: mkdir -p dist && cp target/release/${{ matrix.binary }} dist/${{ matrix.artifact }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: cross/dist/${{ matrix.artifact }}
+          if-no-files-found: error
