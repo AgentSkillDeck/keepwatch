@@ -52,7 +52,7 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 
 ## Linux and Windows (command line, beta)
 
-The `keepwatch` command also runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. There is no tray app on these platforms yet, and no lid-closed sessions or mic mute. See [cross/README.md](cross/README.md) for details.
+The `keepwatch` command also runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. Linux also has lid-closed sessions (`keepwatch lid start`, no password or root; a crash means normal sleep) and a tray app, `keepwatch-tray` (GNOME needs the AppIndicator extension); both are built from `cross/` and not in the 0.3.0 download yet. No mic mute on these platforms, and no lid sessions or tray on Windows yet. See [cross/README.md](cross/README.md) for details.
 
 Download from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest):
 

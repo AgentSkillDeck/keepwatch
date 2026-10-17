@@ -37,4 +37,14 @@ The watchdog checks for a stop file in `~/Library/Caches/Keepwatch/`. Any local 
 - **Startup items** reads the property lists in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons` (at most 1,000 files, 256 KB each). **Remove** works only on your own items (`~/Library/LaunchAgents`): it runs `launchctl bootout` for that item and moves its file to the Trash, after two clicks, and logs it.
 - The **agent time limit** stops a session only if you chose "Stop the session", with the same checks as Stop in the Agents tab.
 
+## Linux (beta): lid-closed sessions and the tray
+
+On Linux, nothing runs as root and there is no password prompt. `keepwatch lid start` (or **Laptop closed** in `keepwatch-tray`) takes a logind block inhibitor on the lid switch, sleep and idle through `systemd-inhibit`, which polkit allows for the active session on most desktops. That means any process running as you, an agent included, can start a lid session. What bounds one is the session itself: it ends after the hours you chose once the lid closes, at the `--at` time, at 20% battery (or when unplugged, with `--no-battery`), at 95 °C, and after 12 hours at most, and then asks to suspend if the lid is shut.
+
+- It changes no setting and writes nothing outside your own folders. The inhibitor belongs to the keepwatch process: if keepwatch crashes or is killed, even with SIGKILL, logind drops it and closing the lid suspends as usual.
+- `keepwatch lid end`, `keepwatch awake --off` and the tray stop a session by writing a stop file in your private runtime folder (`$XDG_RUNTIME_DIR/keepwatch`, mode 0700), after checking the pid is your own keepwatch with the recorded start time. Anything running as you can end a session early, by design.
+- The session log (`~/.local/state/keepwatch/lid.log`), the lock and state files and the tray's autostart file are written as mode 0600, never through a symlink, and the log is capped at 1 MB.
+- `keepwatch-tray` talks only to your session bus (the tray icon and desktop notifications). Like the CLI, it makes no network connections.
+- Debug builds read `KEEPWATCH_TEST_*` environment variables for test stand-ins; release builds ignore them.
+
 A report that any of these guarantees can be broken is in scope.

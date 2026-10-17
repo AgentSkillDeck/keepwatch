@@ -497,19 +497,29 @@ fn lid_log_is_capped_and_never_follows_links() {
 #[test]
 fn release_builds_ignore_test_overrides() {
     let lab = LidLab::new("lid-release");
-    let out = lab.cmd(3600).args(["lid", "start", "--hours", "0.5"]).output().unwrap();
+    let mut child = lab.cmd(3600).args(["lid", "start", "--hours", "0.5"]).spawn().unwrap();
+    // Without a real lid (containers) it can't start. On a machine with logind
+    // (a CI runner, a laptop) it may hold for real, unscaled: end it.
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(5) && matches!(child.try_wait(), Ok(None)) {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    if matches!(child.try_wait(), Ok(None)) {
+        let end = lab.cmd(1).args(["lid", "end"]).output().unwrap();
+        assert_eq!(end.status.code(), Some(0));
+        let _ = finish(child, Duration::from_secs(15));
+    }
     assert_eq!(lab.read("inhibit-args"), "", "the stand-in systemd-inhibit was not used");
     assert_eq!(lab.read("systemctl-args"), "", "the stand-in systemctl was not used");
-    // Without a real lid (CI, containers) it can't start; on a laptop with logind it would hold for real.
-    if out.status.code() == Some(2) {
-        assert!(!text(&out.stderr).is_empty());
-    }
-    let status = lab.cmd(1).args(["status", "--json"]).output().unwrap();
-    let v: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
-    let real_lid = std::fs::read_dir("/proc/acpi/button/lid").is_ok();
-    if !real_lid {
-        assert_eq!(v["power"]["lidClosed"], serde_json::Value::Null, "the stand-in lid was not read");
-    }
+    // The stand-in lid says "closed"; release builds report the real lid instead.
+    let lid = |cmd: &mut Command| -> serde_json::Value {
+        let out = cmd.args(["status", "--json"]).output().unwrap();
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["power"]["lidClosed"].clone()
+    };
+    lab.set_lid(true);
+    assert_eq!(lid(&mut lab.cmd(1)), lid(&mut keepwatch()), "the stand-in lid was not read");
+    lab.set_lid(false);
+    assert_eq!(lid(&mut lab.cmd(1)), lid(&mut keepwatch()));
 }
 
 #[cfg(windows)]

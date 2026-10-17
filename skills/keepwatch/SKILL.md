@@ -2,7 +2,7 @@
 name: keepwatch
 description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?", "keep it awake for 2 days", "which agents are running?", "stop that agent", "start a lid session" or "end the lid session". macOS; Linux and Windows in beta (command line only).
 license: Apache-2.0
-compatibility: macOS 14+. Needs the `keepwatch` command, from the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch; Dashboard → "Install the keepwatch command") or installed on its own. Lid-closed sessions also need the app.
+compatibility: macOS 14+. Needs the `keepwatch` command, from the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch; Dashboard → "Install the keepwatch command") or installed on its own. On macOS, lid-closed sessions also need the app.
 ---
 
 # Keepwatch
@@ -94,11 +94,13 @@ Only stop a session when the user asks for that specific one. Never stop your ow
 
 ## Linux and Windows (beta)
 
-The same `keepwatch` command runs on Linux and Windows ([cross/README.md](https://github.com/AgentSkillDeck/keepwatch/blob/main/cross/README.md)), with the same commands and JSON fields. `status --json` adds `"platform": "linux"` or `"windows"`, and fields the platform can't report are `null`. There is no app there, so `awake` blocks until the time is up or `keepwatch awake --off`; prefer `run --`. `mic`, `lid` and `security` exit with status 1 ("not available"). On Linux, `awake` and `run` need `systemd-inhibit` and exit with status 2 without it. If `keepwatch` isn't installed, ask the user to download `keepwatch-VERSION-linux-x86_64.tar.gz` or `keepwatch-VERSION-windows-x86_64.zip` from the latest release (https://github.com/AgentSkillDeck/keepwatch/releases/latest) and check it against `SHA256SUMS.txt`.
+The same `keepwatch` command runs on Linux and Windows ([cross/README.md](https://github.com/AgentSkillDeck/keepwatch/blob/main/cross/README.md)), with the same commands and JSON fields. `status --json` adds `"platform": "linux"` or `"windows"`, and fields the platform can't report are `null`. `awake` blocks until the time is up or `keepwatch awake --off`; prefer `run --`. `mic` and `security` exit with status 1 ("not available"), and so does `lid` on Windows. On Linux, `awake`, `run` and `lid start` need `systemd-inhibit` and exit with status 2 without it. If `keepwatch` isn't installed, ask the user to download `keepwatch-VERSION-linux-x86_64.tar.gz` or `keepwatch-VERSION-windows-x86_64.zip` from the latest release (https://github.com/AgentSkillDeck/keepwatch/releases/latest) and check it against `SHA256SUMS.txt`.
+
+**Linux lid sessions.** `keepwatch lid start [--hours N] [--at HH:MM] [--until-agents-done] [--no-battery]` runs in the foreground and keeps the laptop running with the lid closed; there is no password prompt on Linux. Run it **only when the user asks for a lid session**, in the background, and tell them it ends on its own (N hours after the lid closes, at 20% battery, when hot, after 12 h at most). `keepwatch lid end` is always fine. Check with `keepwatch lid status --json` (`active`, `lastEndReason`) or `status --json` (`lidSession`). The tray app (`keepwatch-tray`) may hold sessions too; `awake --off` and `lid end` stop those as well.
 
 ## Rules
 
-- **Lid-closed sessions need the user.** Run `keepwatch lid start [--hours N]` only when the user asks for one. It asks the Keepwatch app, which shows the macOS password prompt; the user must type their password at the Mac. Never try to get around the prompt. Tell the user to look at their Mac, then confirm with `keepwatch status` (`sleep.sleepDisabled` becomes `true`).
+- **Lid-closed sessions need the user.** Run `keepwatch lid start [--hours N]` only when the user asks for one. On macOS it asks the Keepwatch app, which shows the macOS password prompt; the user must type their password at the Mac. Never try to get around the prompt. On Linux there is no prompt, so the user's request is the only check: never start one on your own. Tell the user to look at their Mac, then confirm with `keepwatch status` (`sleep.sleepDisabled` becomes `true`).
 - **Ending one is fine:** `keepwatch lid end` only turns sleep back on.
 - **Undo what you start.** Pair every `awake` with `awake --off`, or prefer `run --`, which cleans up on its own.
 - **Mute the mic only when asked:** `keepwatch mic mute|unmute`. It mutes every real mic (built-in, AirPods, USB); virtual devices such as Teams Audio don't count.

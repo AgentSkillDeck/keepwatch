@@ -31,6 +31,19 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
+      # Release builds must ignore every KEEPWATCH_TEST_* stand-in.
+      - name: Release ignores test stand-ins
+        if: runner.os == 'Linux'
+        run: cargo test --locked --release --test cli release_
+      # Starts keepwatch-tray on a private session bus, clicks its menu over
+      # dbusmenu, checks the CLI sees and stops its sessions, and that SIGTERM
+      # releases the inhibitor. Debug build: it uses stand-in systemd tools.
+      - name: Tray smoke test
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -q dbus
+          cargo build --locked
+          dbus-run-session -- sh scripts/tray-smoke.sh target/debug
       - run: cargo build --locked --release
       - name: Smoke test
         shell: bash
@@ -49,16 +62,21 @@ jobs:
           rustup target add x86_64-unknown-linux-musl
           cargo build --locked --release --target x86_64-unknown-linux-musl
           target/x86_64-unknown-linux-musl/release/keepwatch version
+          target/x86_64-unknown-linux-musl/release/keepwatch-tray --version
           file target/x86_64-unknown-linux-musl/release/keepwatch | grep -q 'static'
+          file target/x86_64-unknown-linux-musl/release/keepwatch-tray | grep -q 'static'
       - name: Name the binary
         shell: bash
         run: |
           mkdir -p dist
           src=target/release/${{ matrix.binary }}
-          if [ "$RUNNER_OS" = Linux ]; then src=target/x86_64-unknown-linux-musl/release/keepwatch; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            src=target/x86_64-unknown-linux-musl/release/keepwatch
+            cp target/x86_64-unknown-linux-musl/release/keepwatch-tray dist/keepwatch-tray-linux-x86_64
+          fi
           cp "$src" dist/${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: cross/dist/${{ matrix.artifact }}
+          path: cross/dist/
           if-no-files-found: error
