@@ -327,7 +327,14 @@ fn lid_session_sleeps_after_the_lid_closes() {
 fn lid_end_stops_a_running_session_and_status_shows_it() {
     let lab = LidLab::new("lid-end");
     lab.set_lid(false);
-    let child = lab.cmd(60).args(["lid", "start", "--hours", "0.5", "--until-agents-done"]).spawn().unwrap();
+    // The pause holds the session just after its lock appears: the plan must
+    // already be readable then (it once was written after the lock).
+    let child = lab
+        .cmd(60)
+        .env("KEEPWATCH_TEST_LOCK_PAUSE_MS", "1500")
+        .args(["lid", "start", "--hours", "0.5", "--until-agents-done"])
+        .spawn()
+        .unwrap();
     wait_for("the lid lock", Duration::from_secs(10), || lab.lock().exists());
     let status = lab.cmd(1).args(["lid", "status", "--json"]).output().unwrap();
     let v: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();

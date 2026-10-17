@@ -555,9 +555,19 @@ mod live {
             let holder = Holder::start("Lid-closed session", false, Hold::LidClosed)?;
             let pid = std::process::id();
             let wall_start = unix_now();
+            // Details first, then the lock: anyone who sees the lock (`lid status`,
+            // the tray) must also find the plan, never an active session without one.
+            let state = session_json(&plan, owner, pid, wall_start);
+            let _ = lock::write_state(Kind::Lid, &crate::util::json_string(&state));
             if let Err(e) = lock::write(Kind::Lid, LockInfo { pid, started: crate::procs::own_start_time() }) {
                 holder.release();
                 return Err(format!("couldn't record the lid session, so 'keepwatch lid end' couldn't find it: {e}"));
+            }
+            // Debug-only: widen the moment just after the lock appears, so a
+            // test can check that the plan is already readable then.
+            if let Some(ms) = crate::util::test_override("LOCK_PAUSE_MS").and_then(|v| v.to_str()?.parse::<u64>().ok())
+            {
+                std::thread::sleep(std::time::Duration::from_millis(ms.min(5_000)));
             }
             if lock::stop_requested(Kind::Lid, pid).is_some() {
                 lock::clear_stop(Kind::Lid);
@@ -565,7 +575,7 @@ mod live {
             let mut session = LidSession {
                 holder: Some(holder),
                 tracker: Tracker::new(sensors.lid, 0.0),
-                state: session_json(&plan, owner, pid, wall_start),
+                state,
                 plan,
                 pid,
                 clock: Instant::now(),
