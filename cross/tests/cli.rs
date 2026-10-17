@@ -152,3 +152,24 @@ fn awake_off_stops_a_running_awake() {
     assert!(String::from_utf8_lossy(&again.stdout).contains("Nothing to turn off"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// `run` ignores Ctrl-C (the child gets it) but must still die on SIGTERM,
+/// like the macOS CLI, so `kill` never leaves it holding the machine awake.
+#[cfg(target_os = "linux")]
+#[test]
+fn run_stops_on_sigterm() {
+    let dir = temp_dir("sigterm");
+    let mut kw = keepwatch()
+        .env("KEEPWATCH_TEST_SYSTEMD_INHIBIT", fake_inhibit(&dir))
+        .args(["run", "--", "sleep", "30"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let killed = Command::new("kill").args(["-TERM", &kw.id().to_string()]).status().unwrap();
+    assert!(killed.success());
+    wait_for("run to exit on SIGTERM", Duration::from_secs(5), || matches!(kw.try_wait(), Ok(Some(_))));
+    let _ = std::fs::remove_dir_all(&dir);
+}

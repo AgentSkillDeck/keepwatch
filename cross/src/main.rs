@@ -410,7 +410,9 @@ fn apps_command(json: bool) -> i32 {
 
 // MARK: - keep awake
 
-/// Set on Ctrl-C, SIGTERM (`awake --off`) or SIGHUP.
+/// Set on Ctrl-C. SIGTERM (`awake --off`, `kill`) and SIGHUP keep their
+/// default action and end keepwatch at once; the Linux inhibitor goes with it
+/// (its `cat` reads EOF), and Windows drops the execution state with the process.
 fn stop_flag() -> Arc<AtomicBool> {
     let flag = Arc::new(AtomicBool::new(false));
     let f = flag.clone();
