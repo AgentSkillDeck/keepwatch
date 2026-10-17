@@ -40,9 +40,23 @@ jobs:
           "$bin" status --json
           "$bin" agents --json
           "$bin" ports --json
+      # Linux ships a static (musl) build, so it runs on any x86_64 distribution,
+      # not only ones with the runner's glibc.
+      - name: Static Linux build
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y -q musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          target/x86_64-unknown-linux-musl/release/keepwatch version
+          file target/x86_64-unknown-linux-musl/release/keepwatch | grep -q 'static'
       - name: Name the binary
         shell: bash
-        run: mkdir -p dist && cp target/release/${{ matrix.binary }} dist/${{ matrix.artifact }}
+        run: |
+          mkdir -p dist
+          src=target/release/${{ matrix.binary }}
+          if [ "$RUNNER_OS" = Linux ]; then src=target/x86_64-unknown-linux-musl/release/keepwatch; fi
+          cp "$src" dist/${{ matrix.artifact }}
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
