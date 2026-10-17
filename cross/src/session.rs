@@ -78,10 +78,8 @@ impl AwakeSession {
             }
             _ => (None, None),
         };
-        let mut warning = None;
-        if let Err(e) = lock::write(Kind::Awake, LockInfo { pid, started: crate::procs::own_start_time() }) {
-            warning = Some(format!("'keepwatch awake --off' won't find this one: {e}"));
-        }
+        // Clear an old stop request and write the details before the lock: once
+        // the lock exists, a stop request is real and the details are readable.
         if lock::stop_requested(Kind::Awake, pid).is_some() {
             lock::clear_stop(Kind::Awake);
         }
@@ -98,6 +96,10 @@ impl AwakeSession {
             ends_at,
         };
         let _ = lock::write_state(Kind::Awake, &crate::util::json_string(&state));
+        let mut warning = None;
+        if let Err(e) = lock::write(Kind::Awake, LockInfo { pid, started: crate::procs::own_start_time() }) {
+            warning = Some(format!("'keepwatch awake --off' won't find this one: {e}"));
+        }
         let session = AwakeSession {
             holder: Some(holder),
             mode,
