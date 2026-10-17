@@ -329,8 +329,9 @@ fn lid_end_stops_a_running_session_and_status_shows_it() {
     lab.set_lid(false);
     // The pause holds the session just after its lock appears: the plan must
     // already be readable then (it once was written after the lock).
+    // Time runs 10x here, so the 2-minute agents grace (12 s) outlasts the pause.
     let child = lab
-        .cmd(60)
+        .cmd(10)
         .env("KEEPWATCH_TEST_LOCK_PAUSE_MS", "1500")
         .args(["lid", "start", "--hours", "0.5", "--until-agents-done"])
         .spawn()

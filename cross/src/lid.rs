@@ -557,6 +557,11 @@ mod live {
             let wall_start = unix_now();
             // Details first, then the lock: anyone who sees the lock (`lid status`,
             // the tray) must also find the plan, never an active session without one.
+            // An old stop request is cleared before the lock exists; once it
+            // does, any request is a real `lid end` and must be honoured.
+            if lock::stop_requested(Kind::Lid, pid).is_some() {
+                lock::clear_stop(Kind::Lid);
+            }
             let state = session_json(&plan, owner, pid, wall_start);
             let _ = lock::write_state(Kind::Lid, &crate::util::json_string(&state));
             if let Err(e) = lock::write(Kind::Lid, LockInfo { pid, started: crate::procs::own_start_time() }) {
@@ -568,9 +573,6 @@ mod live {
             if let Some(ms) = crate::util::test_override("LOCK_PAUSE_MS").and_then(|v| v.to_str()?.parse::<u64>().ok())
             {
                 std::thread::sleep(std::time::Duration::from_millis(ms.min(5_000)));
-            }
-            if lock::stop_requested(Kind::Lid, pid).is_some() {
-                lock::clear_stop(Kind::Lid);
             }
             let mut session = LidSession {
                 holder: Some(holder),
