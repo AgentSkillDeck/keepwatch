@@ -1,15 +1,24 @@
 [package]
 name = "keepwatch"
-version = "0.3.0"
+version = "0.4.0-beta.1"
 edition = "2021"
 license = "Apache-2.0"
 description = "Keep your computer awake for AI coding agents, and check power, agents, ports, mic and camera (Linux and Windows)."
 publish = false
 rust-version = "1.88"
 
+[lib]
+name = "keepwatch"
+path = "src/lib.rs"
+
 [[bin]]
 name = "keepwatch"
 path = "src/main.rs"
+
+# The Linux tray app. On other platforms it builds as a stub that says so.
+[[bin]]
+name = "keepwatch-tray"
+path = "src/tray/main.rs"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
@@ -17,6 +26,16 @@ ctrlc = "3.5.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
+
+[target."cfg(unix)".dependencies]
+# O_NOFOLLOW for the log, state and autostart files (already in the tree via ctrlc and sysinfo).
+libc = "0.2"
+
+[target."cfg(target_os = \"linux\")".dependencies]
+# The tray icon: StatusNotifierItem over D-Bus, pure Rust, no GTK.
+ksni = { version = "0.3.6", default-features = false, features = ["blocking", "async-io"] }
+# Desktop notifications, on the same zbus ksni already uses (no extra crates).
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [target."cfg(windows)".dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_System_Power", "Win32_Foundation"] }

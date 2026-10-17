@@ -77,6 +77,49 @@ pub fn prevented_by(list: &[Inhibitor]) -> Vec<String> {
     out
 }
 
+/// What to hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hold {
+    /// Idle and sleep (`awake`, `run`).
+    Awake,
+    /// Also the lid switch (`lid start`): logind doesn't act on closing the lid.
+    LidClosed,
+}
+
+impl Hold {
+    /// The `systemd-inhibit --what=` list.
+    pub fn what(self) -> &'static str {
+        match self {
+            Hold::Awake => "idle:sleep",
+            Hold::LidClosed => "handle-lid-switch:sleep:idle",
+        }
+    }
+}
+
+/// Whether some app holds a block inhibitor on the lid switch, so closing the
+/// lid won't suspend: the Linux counterpart of macOS `SleepDisabled`.
+pub fn lid_switch_blocked(list: &[Inhibitor]) -> bool {
+    list.iter().any(|i| i.mode == "block" && i.what.split(':').any(|w| w == "handle-lid-switch"))
+}
+
+/// A `systemd-inhibit` failure, explained. polkit refusals get a clear message.
+pub fn explain_failure(hold: Hold, stderr: &str) -> String {
+    let msg = crate::util::clean_line(stderr.trim(), 300);
+    let lower = msg.to_lowercase();
+    let refused = ["access denied", "not authorized", "authentication", "permission denied", "not allowed"]
+        .iter()
+        .any(|m| lower.contains(m));
+    match (hold, refused) {
+        (Hold::LidClosed, true) => format!(
+            "the system refused to let keepwatch hold the lid switch ({msg}). Your polkit policy doesn't allow \
+             this user to block lid-switch handling, so a lid session can't start; keepwatch never asks for root."
+        ),
+        (Hold::Awake, true) => format!("the system refused the keep-awake lock ({msg})"),
+        _ if msg.is_empty() => "couldn't keep this computer awake: systemd-inhibit exited".into(),
+        _ => format!("couldn't keep this computer awake: {msg}"),
+    }
+}
+
 /// The current inhibitor list, or None if it can't be read.
 #[cfg(target_os = "linux")]
 pub fn current_inhibitors() -> Option<Vec<Inhibitor>> {
@@ -101,16 +144,16 @@ mod linux {
     }
 
     impl Holder {
-        /// Take a block inhibitor for idle and sleep. `display` can't be
-        /// honoured separately on Linux yet (screen blanking is up to the desktop).
-        pub fn start(why: &str, _display: bool) -> Result<Holder, String> {
+        /// Take a block inhibitor for `hold`. `display` can't be honoured
+        /// separately on Linux yet (screen blanking is up to the desktop).
+        pub fn start(why: &str, _display: bool, hold: super::Hold) -> Result<Holder, String> {
             let missing = "systemd-inhibit isn't installed, so keepwatch can't keep this computer awake \
                            (it needs systemd-logind)";
             let program = crate::util::system_program("systemd-inhibit").ok_or(missing)?;
             let cat = crate::util::system_program("cat").ok_or("couldn't find cat in the system folders")?;
             let why = why.chars().filter(|c| !c.is_control()).take(120).collect::<String>();
             let mut child = Command::new(program)
-                .args(["--what=idle:sleep", "--who=keepwatch", &format!("--why={why}"), "--mode=block"])
+                .args([&format!("--what={}", hold.what()), "--who=keepwatch", &format!("--why={why}"), "--mode=block"])
                 .arg(cat)
                 .env("LC_ALL", "C")
                 .stdin(Stdio::piped())
@@ -131,12 +174,7 @@ mod linux {
                     if let Some(err) = child.stderr.take() {
                         let _ = err.take(4096).read_to_string(&mut msg);
                     }
-                    let msg = msg.trim();
-                    return Err(if msg.is_empty() {
-                        "couldn't keep this computer awake: systemd-inhibit exited".into()
-                    } else {
-                        format!("couldn't keep this computer awake: {msg}")
-                    });
+                    return Err(super::explain_failure(hold, &msg));
                 }
                 let elapsed = started.elapsed();
                 if elapsed >= Duration::from_millis(300) {
@@ -178,7 +216,10 @@ pub struct Holder;
 
 #[cfg(windows)]
 impl Holder {
-    pub fn start(_why: &str, display: bool) -> Result<Holder, String> {
+    pub fn start(_why: &str, display: bool, hold: Hold) -> Result<Holder, String> {
+        if hold == Hold::LidClosed {
+            return Err("lid sessions are not available on Windows yet".into());
+        }
         if crate::win::keep_awake(true, display) {
             Ok(Holder)
         } else {
@@ -200,7 +241,7 @@ pub struct Holder;
 
 #[cfg(not(any(target_os = "linux", windows)))]
 impl Holder {
-    pub fn start(_why: &str, _display: bool) -> Result<Holder, String> {
+    pub fn start(_why: &str, _display: bool, _hold: Hold) -> Result<Holder, String> {
         Err("this build of keepwatch is for Linux and Windows; on macOS use the Swift keepwatch".into())
     }
     pub fn alive(&mut self) -> bool {
@@ -239,6 +280,21 @@ Totem Player   1000 me   4000 totem           handle-lid-switch                 
         assert_eq!(parse_inhibitors(""), vec![]);
         assert_eq!(parse_inhibitors("No inhibitors.\n"), vec![]);
         assert_eq!(parse_inhibitors("WHO\nx\n"), vec![], "no WHAT column: nothing to report");
+    }
+
+    #[test]
+    fn lid_switch_blocks_and_polkit_refusals() {
+        let l = parse_inhibitors(LIST);
+        assert!(lid_switch_blocked(&l), "Totem blocks the lid switch");
+        assert!(!lid_switch_blocked(&l[..5]));
+        let delay =
+            vec![Inhibitor { who: "x".into(), pid: None, what: "handle-lid-switch".into(), mode: "delay".into() }];
+        assert!(!lid_switch_blocked(&delay), "delay doesn't keep it running");
+        let m = explain_failure(Hold::LidClosed, "Failed to inhibit: Access denied\n");
+        assert!(m.contains("refused") && m.contains("polkit") && m.contains("Access denied"), "{m}");
+        assert!(explain_failure(Hold::Awake, "").contains("systemd-inhibit exited"));
+        assert!(explain_failure(Hold::LidClosed, "Failed to connect to bus").starts_with("couldn't keep"));
+        assert_eq!(Hold::LidClosed.what(), "handle-lid-switch:sleep:idle");
     }
 
     #[test]

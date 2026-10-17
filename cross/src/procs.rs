@@ -116,6 +116,51 @@ fn full_name(comm: &str, argv0: Option<&str>) -> String {
     comm.to_string()
 }
 
+/// One of the user's agent sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Session {
+    pub pid: u32,
+    pub agent: &'static str,
+    pub folder: Option<String>,
+    pub started: Option<u64>,
+    pub cpu_ms: u64,
+}
+
+/// The user's agent sessions in `procs`, oldest first.
+pub fn sessions(procs: &[Proc]) -> Vec<Session> {
+    let mut s: Vec<Session> = procs
+        .iter()
+        .filter(|p| p.own)
+        .filter_map(|p| {
+            Some(Session {
+                pid: p.pid,
+                agent: agents::agent_name(&p.running())?,
+                folder: p.cwd.clone(),
+                started: p.started,
+                cpu_ms: p.cpu_ms,
+            })
+        })
+        .collect();
+    s.sort_by_key(|x| (x.started.unwrap_or(u64::MAX), x.pid));
+    s
+}
+
+/// The user's processes that could be agents, for `agents::running_agents`.
+pub fn own_running(procs: &[Proc]) -> Vec<RunningProcess> {
+    procs.iter().filter(|p| p.own && agents::is_candidate(&p.name)).map(Proc::running).collect()
+}
+
+/// Names of the user's running agents, now (a light snapshot).
+pub fn running_agent_names() -> std::collections::BTreeSet<String> {
+    agents::running_agents(&own_running(&snapshot_light())).into_keys().collect()
+}
+
+/// This process's start time (unix seconds), 0 if unknown.
+pub fn own_start_time() -> u64 {
+    let me = std::process::id();
+    snapshot_of(&[me]).first().and_then(|p| p.started).unwrap_or(0)
+}
+
 /// Ask a process to quit: SIGTERM on Unix; on Windows there is no polite
 /// signal for console programs, so it is ended (taskkill /F, i.e. TerminateProcess).
 pub fn terminate(pid: u32) -> bool {

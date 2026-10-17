@@ -11,7 +11,8 @@ pub enum Command {
     Run { command: Vec<String>, display: bool },
     Mic { mute: bool },
     LidEnd,
-    LidStart { half_hours: Option<u32> },
+    LidStart(LidRequest),
+    LidStatus { json: bool },
     Ports { json: bool },
     Agents { json: bool },
     AgentStop { pid: u32 },
@@ -28,6 +29,18 @@ pub enum AwakeRequest {
     Indefinitely,
     WhileAgentsRun,
     Off,
+}
+
+/// `keepwatch lid start [--hours N] [--at HH:MM] [--until-agents-done] [--no-battery]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LidRequest {
+    /// Sleep this many half hours after the lid closes (1..=24).
+    pub half_hours: u32,
+    /// `--at`: unix seconds of the next HH:MM.
+    pub sleep_at: Option<i64>,
+    pub until_agents_done: bool,
+    /// Off with `--no-battery`.
+    pub allow_on_battery: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,13 +81,19 @@ USAGE
   keepwatch privacy [--json]         mic and camera now (best effort)
   keepwatch apps [--json]            your apps by memory use (read-only)
   keepwatch ports [--json]           your processes listening on TCP ports
+  keepwatch lid start [--hours N] [--at HH:MM] [--until-agents-done] [--no-battery]
+                                     Linux: keep running with the lid closed; sleeps N hours
+                                     (0.5-12, default 3) after the lid closes, at HH:MM, or when
+                                     agents finish; ends on battery at 20% (or when unplugged
+                                     with --no-battery), when hot, and after 12 h at most
+  keepwatch lid end                  end a running lid session
+  keepwatch lid status [--json]      the running lid session and why the last one ended
   keepwatch version
 
-  Not on Linux and Windows yet (macOS only): mic mute|unmute, lid start|end, security.
+  Not on Linux and Windows yet (macOS only): mic mute|unmute, security. Lid sessions: Linux only.
 
-There is no Keepwatch app on Linux and Windows yet, so 'awake' holds the
-computer awake itself and keeps running until the time is up, 'awake --off'
-or Ctrl-C.
+'awake' and 'lid start' hold the computer themselves and keep running until
+they end, or Ctrl-C. On Linux, the keepwatch-tray app can hold them instead.
 
 EXIT CODES  0 ok · 1 usage error · 2 system error · otherwise CMD's status for 'run'";
 
@@ -139,22 +158,56 @@ pub fn parse<Tz: TimeZone>(args: &[String], now: &DateTime<Tz>) -> Result<Comman
             ["unmute"] => Ok(Command::Mic { mute: false }),
             _ => Err(bad("usage: keepwatch mic mute|unmute")),
         },
-        "lid" => match rest.as_slice() {
-            ["end"] => Ok(Command::LidEnd),
-            ["start"] => Ok(Command::LidStart { half_hours: None }),
-            ["start", "--hours", h] => {
-                let hours: f64 = h.parse().map_err(|_| bad("--hours needs a number from 0.5 to 12"))?;
-                if !(hours.is_finite() && hours > 0.0 && hours <= 12.0) {
-                    return Err(bad("--hours needs a number from 0.5 to 12"));
-                }
-                // Rounded to the nearest half hour, like the Swift CLI; 0..=24 so the cast is exact.
-                let half = (hours * 2.0).round().clamp(0.0, 24.0) as u32;
-                Ok(Command::LidStart { half_hours: Some(half) })
-            }
-            _ => Err(bad("usage: keepwatch lid start [--hours N] | keepwatch lid end")),
+        "lid" => match rest.split_first() {
+            Some((&"end", [])) => Ok(Command::LidEnd),
+            Some((&"status", more)) => match more {
+                [] => Ok(Command::LidStatus { json: false }),
+                ["--json"] => Ok(Command::LidStatus { json: true }),
+                _ => Err(bad("usage: keepwatch lid status [--json]")),
+            },
+            Some((&"start", more)) => parse_lid_start(more, now).map(Command::LidStart),
+            _ => Err(bad(LID_USAGE)),
         },
         other => Err(ParseError::UnknownCommand(other.to_string())),
     }
+}
+
+const LID_USAGE: &str =
+    "usage: keepwatch lid start [--hours N] [--at HH:MM] [--until-agents-done] [--no-battery] | keepwatch lid end | keepwatch lid status [--json]";
+
+fn parse_lid_start<Tz: TimeZone>(rest: &[&str], now: &DateTime<Tz>) -> Result<LidRequest, ParseError> {
+    let mut req = LidRequest {
+        half_hours: crate::lid::DEFAULT_HALF_HOURS,
+        sleep_at: None,
+        until_agents_done: false,
+        allow_on_battery: true,
+    };
+    let (mut hours_seen, mut at_seen) = (false, false);
+    let mut it = rest.iter();
+    while let Some(arg) = it.next() {
+        match *arg {
+            "--hours" if !hours_seen => {
+                let msg = "--hours needs a number from 0.5 to 12";
+                let hours: f64 = it.next().ok_or_else(|| bad(msg))?.parse().map_err(|_| bad(msg))?;
+                if !(hours.is_finite() && (0.5..=12.0).contains(&hours)) {
+                    return Err(bad(msg));
+                }
+                // Rounded to the nearest half hour, like the Swift CLI; 1..=24 so the cast is exact.
+                req.half_hours = (hours * 2.0).round().clamp(1.0, 24.0) as u32;
+                hours_seen = true;
+            }
+            "--at" if !at_seen => {
+                let msg = "--at needs a time like 01:30";
+                let t = it.next().ok_or_else(|| bad(msg))?;
+                req.sleep_at = Some(duration::next_occurrence(t, now).ok_or_else(|| bad(msg))?.timestamp());
+                at_seen = true;
+            }
+            "--until-agents-done" if !req.until_agents_done => req.until_agents_done = true,
+            "--no-battery" if req.allow_on_battery => req.allow_on_battery = false,
+            _ => return Err(bad(LID_USAGE)),
+        }
+    }
+    Ok(req)
 }
 
 /// A pid as the Swift CLI accepts it: a positive Int32 above 1.
@@ -237,8 +290,16 @@ mod tests {
         assert_eq!(p("security --json"), Ok(Command::Security { json: true }));
         assert_eq!(p("apps"), Ok(Command::Apps { json: false }));
         assert_eq!(p("apps --json"), Ok(Command::Apps { json: true }));
-        assert_eq!(p("lid start"), Ok(Command::LidStart { half_hours: None }));
-        assert_eq!(p("lid start --hours 2.7"), Ok(Command::LidStart { half_hours: Some(5) }));
+        let lid = |half_hours, until_agents_done, allow_on_battery| {
+            Ok(Command::LidStart(LidRequest { half_hours, sleep_at: None, until_agents_done, allow_on_battery }))
+        };
+        assert_eq!(p("lid start"), lid(6, false, true));
+        assert_eq!(p("lid start --hours 2.7"), lid(5, false, true));
+        assert_eq!(p("lid start --hours 0.5"), lid(1, false, true));
+        assert_eq!(p("lid start --hours 12"), lid(24, false, true));
+        assert_eq!(p("lid start --no-battery --until-agents-done --hours 1"), lid(2, true, false));
+        assert_eq!(p("lid status"), Ok(Command::LidStatus { json: false }));
+        assert_eq!(p("lid status --json"), Ok(Command::LidStatus { json: true }));
         assert_eq!(p("version"), Ok(Command::Version));
         assert_eq!(p("--help"), Ok(Command::Help));
     }
@@ -251,6 +312,16 @@ mod tests {
         assert_eq!(until("16:00"), Ok(Command::Awake(AwakeRequest::Minutes(23 * 60))));
         for b in ["24:00", "9", "18:3x", "-1:00", "18:60", "١٨:٣٠"] {
             assert!(until(b).is_err(), "{b}");
+        }
+    }
+
+    #[test]
+    fn lid_at_is_the_next_occurrence() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 16, 23, 0, 0).single().unwrap();
+        let args: Vec<String> = ["lid", "start", "--at", "01:30"].iter().map(|s| s.to_string()).collect();
+        match parse(&args, &now) {
+            Ok(Command::LidStart(r)) => assert_eq!(r.sleep_at, Some(now.timestamp() + 9000), "past midnight: tomorrow"),
+            other => panic!("{other:?}"),
         }
     }
 
@@ -281,6 +352,18 @@ mod tests {
             "lid start --hours 13",
             "lid start --hours nan",
             "lid start now",
+            "lid start --hours 0.1",
+            "lid start --hours 0.4",
+            "lid start --hours",
+            "lid start --hours 1 --hours 2",
+            "lid start --at",
+            "lid start --at 25:00",
+            "lid start --at 1:30pm",
+            "lid start --no-battery --no-battery",
+            "lid start --hours inf",
+            "lid end now",
+            "lid status --yaml",
+            "lid stop",
         ] {
             assert!(p(b).is_err(), "{b}");
         }

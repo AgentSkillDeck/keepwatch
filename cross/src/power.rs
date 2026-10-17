@@ -136,9 +136,49 @@ pub fn from_windows(s: WinPowerStatus) -> Power {
     }
 }
 
+/// `busctl get-property … LidClosed` / `Docked` output ("b true") -> bool.
+pub fn parse_busctl_bool(text: &str) -> Option<bool> {
+    let mut it = text.split_whitespace();
+    if it.next()? != "b" {
+        return None;
+    }
+    let v = match it.next()? {
+        "true" => true,
+        "false" => false,
+        _ => return None,
+    };
+    it.next().is_none().then_some(v)
+}
+
+/// A `thermal_zone*/temp` value (millidegrees Celsius). Values outside
+/// -50..=200 °C are sensor junk and ignored.
+pub fn parse_temp(text: &str) -> Option<i64> {
+    text.trim().parse::<i64>().ok().filter(|t| (-50_000..=200_000).contains(t))
+}
+
+#[cfg(target_os = "linux")]
+fn supplies_root() -> std::path::PathBuf {
+    crate::util::test_path("POWER_SUPPLY").unwrap_or_else(|| "/sys/class/power_supply".into())
+}
+
 #[cfg(target_os = "linux")]
 pub fn current() -> Power {
     use std::path::Path;
+    let mut p = battery();
+    p.lid_closed = lid_closed();
+    // power-profiles-daemon: "power-saver" is the closest thing to Low Power Mode.
+    if let Some(ppd) = crate::util::system_program("powerprofilesctl") {
+        p.low_power_mode = crate::util::run_capture(&ppd, &["get"], std::time::Duration::from_secs(2))
+            .map(|s| s.trim() == "power-saver");
+    } else if let Some(profile) = crate::util::read_value(Path::new("/sys/firmware/acpi/platform_profile")) {
+        p.low_power_mode = Some(profile == "low-power");
+    }
+    p
+}
+
+/// Battery and adapter only (no lid, no power profile): cheap enough for every rule tick.
+#[cfg(target_os = "linux")]
+pub fn battery() -> Power {
     const MAX_SUPPLIES: usize = 64;
     const KEYS: &[&str] = &[
         "type",
@@ -157,7 +197,7 @@ pub fn current() -> Power {
         "current_now",
     ];
     let mut supplies = Vec::new();
-    if let Ok(dir) = std::fs::read_dir("/sys/class/power_supply") {
+    if let Ok(dir) = std::fs::read_dir(supplies_root()) {
         for entry in dir.flatten().take(MAX_SUPPLIES) {
             let mut s = Supply::new();
             for key in KEYS {
@@ -168,22 +208,66 @@ pub fn current() -> Power {
             supplies.push(s);
         }
     }
-    let mut p = from_supplies(&supplies);
+    from_supplies(&supplies)
+}
+
+/// Whether the lid is closed: `/proc/acpi/button/lid/*/state`, else logind's
+/// `LidClosed`. None if neither can be read (desktops, containers).
+/// Debug builds read `KEEPWATCH_TEST_LID_STATE` (a file like the /proc one) instead.
+#[cfg(target_os = "linux")]
+pub fn lid_closed() -> Option<bool> {
+    if let Some(path) = crate::util::test_path("LID_STATE") {
+        return crate::util::read_regular_capped(&path, 4096).and_then(|t| parse_lid_state(&t));
+    }
     if let Ok(dir) = std::fs::read_dir("/proc/acpi/button/lid") {
-        p.lid_closed = dir
+        let found = dir
             .flatten()
             .take(8)
-            .filter_map(|e| crate::util::read_capped(&e.path().join("state")))
+            .filter_map(|e| crate::util::read_regular_capped(&e.path().join("state"), 4096))
             .find_map(|t| parse_lid_state(&t));
+        if found.is_some() {
+            return found;
+        }
     }
-    // power-profiles-daemon: "power-saver" is the closest thing to Low Power Mode.
-    if let Some(ppd) = crate::util::system_program("powerprofilesctl") {
-        p.low_power_mode = crate::util::run_capture(&ppd, &["get"], std::time::Duration::from_secs(2))
-            .map(|s| s.trim() == "power-saver");
-    } else if let Some(profile) = crate::util::read_value(Path::new("/sys/firmware/acpi/platform_profile")) {
-        p.low_power_mode = Some(profile == "low-power");
+    logind_bool("LidClosed")
+}
+
+/// Whether logind counts the machine as docked (an external display or a
+/// dock); then logind itself ignores the lid by default, so keepwatch doesn't
+/// suspend it either. None if unknown.
+#[cfg(target_os = "linux")]
+pub fn docked() -> Option<bool> {
+    if crate::util::test_path("LID_STATE").is_some() {
+        // A stand-in lid: never ask the real logind about the real machine.
+        return crate::util::test_override("DOCKED").map(|v| v == "1");
     }
-    p
+    logind_bool("Docked")
+}
+
+#[cfg(target_os = "linux")]
+fn logind_bool(property: &str) -> Option<bool> {
+    let busctl = crate::util::system_program("busctl")?;
+    let args = [
+        "get-property",
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+        property,
+    ];
+    parse_busctl_bool(&crate::util::run_capture(&busctl, &args, std::time::Duration::from_secs(2))?)
+}
+
+/// The hottest thermal zone, in millidegrees Celsius, or None if none can be read.
+/// Debug builds read `KEEPWATCH_TEST_THERMAL` instead of `/sys/class/thermal`.
+#[cfg(target_os = "linux")]
+pub fn max_temp_millic() -> Option<i64> {
+    let root = crate::util::test_path("THERMAL").unwrap_or_else(|| "/sys/class/thermal".into());
+    let dir = std::fs::read_dir(root).ok()?;
+    dir.flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with("thermal_zone"))
+        .take(64)
+        .filter_map(|e| crate::util::read_regular_capped(&e.path().join("temp"), 4096).and_then(|t| parse_temp(&t)))
+        .max()
 }
 
 #[cfg(windows)]
@@ -293,6 +377,21 @@ mod tests {
         assert_eq!(parse_lid_state("state:      closed\n"), Some(true));
         assert_eq!(parse_lid_state("garbage"), None);
         assert_eq!(parse_lid_state(""), None);
+    }
+
+    #[test]
+    fn busctl_and_thermal_values() {
+        assert_eq!(parse_busctl_bool("b true\n"), Some(true));
+        assert_eq!(parse_busctl_bool("b false"), Some(false));
+        for bad in ["", "b", "s true", "b yes", "b true extra", "true"] {
+            assert_eq!(parse_busctl_bool(bad), None, "{bad}");
+        }
+        assert_eq!(parse_temp("45000\n"), Some(45_000));
+        assert_eq!(parse_temp("95000"), Some(95_000));
+        assert_eq!(parse_temp("-273000"), None, "junk sensor");
+        assert_eq!(parse_temp("999999999999999999999"), None);
+        assert_eq!(parse_temp("hot"), None);
+        assert_eq!(parse_temp(""), None);
     }
 
     #[test]
