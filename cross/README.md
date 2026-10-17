@@ -67,7 +67,7 @@ The tray runs the same code as the CLI, in-process, and uses the same lock files
 
 ## Install
 
-Download `keepwatch-VERSION-linux-x86_64.tar.gz` (static `keepwatch` and `keepwatch-tray`, any x86_64 distribution) or `keepwatch-VERSION-windows-x86_64.zip` from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest), and check it against `SHA256SUMS.txt`.
+Download `keepwatch-VERSION-linux-x86_64.tar.gz` (static `keepwatch` and `keepwatch-tray`, any x86_64 distribution) or `keepwatch-VERSION-windows-x86_64.zip` from the [releases page](https://github.com/AgentSkillDeck/keepwatch/releases) (the newest Linux/Windows build is a pre-release, currently v0.4.0-beta.1), and check it against `SHA256SUMS.txt`.
 
 ## Build
 

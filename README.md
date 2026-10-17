@@ -50,21 +50,27 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 
 Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themselves. Lid-closed sessions (`keepwatch lid start`) need the app, because it shows the password prompt and runs the watchdog.
 
-## Linux and Windows (command line, beta)
+## Linux and Windows (beta)
 
-The `keepwatch` command also runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. Linux also has lid-closed sessions (`keepwatch lid start`, no password or root; a crash means normal sleep) and a tray app, `keepwatch-tray` (GNOME needs the AppIndicator extension); both are built from `cross/` and not in the 0.3.0 download yet. No mic mute on these platforms, and no lid sessions or tray on Windows yet. See [cross/README.md](cross/README.md) for details.
+The `keepwatch` command also runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes as on the Mac.
 
-Download from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest):
+On **Linux** there is also:
+- **A tray icon**, `keepwatch-tray`: keep awake (1 h, 3 h, 8 h, until off, while agents run), laptop-closed sessions, running agents, and open at login. It works on KDE, Ubuntu, XFCE and Cinnamon; stock GNOME needs the AppIndicator extension.
+- **Laptop-closed sessions**, `keepwatch lid start --hours 3` (or from the tray). The laptop keeps running with the lid shut, then suspends, with the same rules as on the Mac. No password or root: Keepwatch asks systemd to ignore the lid only while it runs, so if it crashes the laptop sleeps as usual.
 
-- **Linux (x86_64, any distribution):** `keepwatch-0.3.0-linux-x86_64.tar.gz`, a static binary. Keeping awake needs systemd (`systemd-inhibit`).
+Windows has the command line only for now, and neither has mic mute yet. Details are in [cross/README.md](cross/README.md).
+
+Download from **[v0.4.0-beta.1](https://github.com/AgentSkillDeck/keepwatch/releases/tag/v0.4.0-beta.1)**:
+
+- **Linux (x86_64, any distribution):** `keepwatch-0.4.0-beta.1-linux-x86_64.tar.gz`, static binaries. Keeping awake and lid sessions need systemd.
   ```sh
-  tar -xzf keepwatch-0.3.0-linux-x86_64.tar.gz
-  install -m 755 keepwatch-0.3.0-linux-x86_64/keepwatch ~/.local/bin/keepwatch
-  keepwatch status
+  tar -xzf keepwatch-0.4.0-beta.1-linux-x86_64.tar.gz
+  install -m 755 keepwatch-0.4.0-beta.1-linux-x86_64/keepwatch keepwatch-0.4.0-beta.1-linux-x86_64/keepwatch-tray ~/.local/bin/
+  keepwatch-tray &     # then choose "Open at login" in its menu
   ```
-- **Windows (x86_64):** `keepwatch-0.3.0-windows-x86_64.zip`. Unzip it and put `keepwatch.exe` in a folder on your `PATH`. It isn't code-signed yet, so Windows SmartScreen may warn the first time; choose **More info › Run anyway**.
+- **Windows (x86_64):** `keepwatch-0.4.0-beta.1-windows-x86_64.zip`. Unzip it and put `keepwatch.exe` in a folder on your `PATH`. It isn't code-signed yet, so Windows SmartScreen may warn the first time; choose **More info › Run anyway**.
 
-Check a download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (Linux) or `Get-FileHash` (Windows).
+Check a download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (Linux) or `Get-FileHash` (Windows). This is a beta that hasn't been tried on real laptops yet; please [open an issue](https://github.com/AgentSkillDeck/keepwatch/issues) with what you see.
 
 ## What it does
 
