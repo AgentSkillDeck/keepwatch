@@ -23,11 +23,15 @@ Fields that can't be known on a platform are `null` in JSON, never guessed. On m
 - No tray app, no privacy history and no agent session titles (`title` is always `null`).
 - `thermal` and `sleepDisabled` are always `null`. On Windows, `preventedBy` is `null` because reading other apps' requests (`powercfg /requests`) needs an administrator.
 - Linux: `--display` doesn't stop the screen blanking (that is up to the desktop), and `awake` needs `systemd-inhibit`. Without it, `awake` and `run` exit with status 2.
-- Windows: only compile-checked and tested in CI so far.
+- Windows: tested in CI (Windows Server), not yet on a laptop. The `.exe` isn't code-signed, so SmartScreen may warn.
 
 ## Exit codes
 
 0 ok, 1 usage error, 2 system error. For `run`, the command's own status: 127 if it isn't found, and 128 + N if signal N killed it (Linux).
+
+## Install
+
+Download `keepwatch-VERSION-linux-x86_64.tar.gz` (static, any x86_64 distribution) or `keepwatch-VERSION-windows-x86_64.zip` from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest), and check it against `SHA256SUMS.txt`.
 
 ## Build
 

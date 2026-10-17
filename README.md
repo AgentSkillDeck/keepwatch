@@ -52,7 +52,19 @@ Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themse
 
 ## Linux and Windows (command line, beta)
 
-A Rust port of the `keepwatch` command runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. There is no tray app on these platforms yet. See [cross/README.md](cross/README.md) for what works, what doesn't yet, and how to build it.
+The `keepwatch` command also runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. There is no tray app on these platforms yet, and no lid-closed sessions or mic mute. See [cross/README.md](cross/README.md) for details.
+
+Download from the [latest release](https://github.com/AgentSkillDeck/keepwatch/releases/latest):
+
+- **Linux (x86_64, any distribution):** `keepwatch-0.3.0-linux-x86_64.tar.gz`, a static binary. Keeping awake needs systemd (`systemd-inhibit`).
+  ```sh
+  tar -xzf keepwatch-0.3.0-linux-x86_64.tar.gz
+  install -m 755 keepwatch-0.3.0-linux-x86_64/keepwatch ~/.local/bin/keepwatch
+  keepwatch status
+  ```
+- **Windows (x86_64):** `keepwatch-0.3.0-windows-x86_64.zip`. Unzip it and put `keepwatch.exe` in a folder on your `PATH`. It isn't code-signed yet, so Windows SmartScreen may warn the first time; choose **More info › Run anyway**.
+
+Check a download with `sha256sum -c SHA256SUMS.txt --ignore-missing` (Linux) or `Get-FileHash` (Windows).
 
 ## What it does
 

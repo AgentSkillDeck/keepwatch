@@ -94,7 +94,7 @@ Only stop a session when the user asks for that specific one. Never stop your ow
 
 ## Linux and Windows (beta)
 
-The same `keepwatch` command runs on Linux and Windows ([cross/README.md](https://github.com/AgentSkillDeck/keepwatch/blob/main/cross/README.md)), with the same commands and JSON fields. `status --json` adds `"platform": "linux"` or `"windows"`, and fields the platform can't report are `null`. There is no app there, so `awake` blocks until the time is up or `keepwatch awake --off`; prefer `run --`. `mic`, `lid` and `security` exit with status 1 ("not available"). On Linux, `awake` and `run` need `systemd-inhibit` and exit with status 2 without it.
+The same `keepwatch` command runs on Linux and Windows ([cross/README.md](https://github.com/AgentSkillDeck/keepwatch/blob/main/cross/README.md)), with the same commands and JSON fields. `status --json` adds `"platform": "linux"` or `"windows"`, and fields the platform can't report are `null`. There is no app there, so `awake` blocks until the time is up or `keepwatch awake --off`; prefer `run --`. `mic`, `lid` and `security` exit with status 1 ("not available"). On Linux, `awake` and `run` need `systemd-inhibit` and exit with status 2 without it. If `keepwatch` isn't installed, ask the user to download `keepwatch-VERSION-linux-x86_64.tar.gz` or `keepwatch-VERSION-windows-x86_64.zip` from the latest release (https://github.com/AgentSkillDeck/keepwatch/releases/latest) and check it against `SHA256SUMS.txt`.
 
 ## Rules
 
