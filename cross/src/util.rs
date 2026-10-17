@@ -29,15 +29,30 @@ pub fn read_value(path: &Path) -> Option<String> {
 const SYSTEM_DIRS: &[&str] =
     &["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin", "/run/current-system/sw/bin"];
 
+/// A debug-only test stand-in: `KEEPWATCH_TEST_<NAME>` when `enabled`.
+/// Callers pass `cfg!(debug_assertions)`, so release builds never read these.
+pub fn test_override_if(enabled: bool, name: &str) -> Option<std::ffi::OsString> {
+    if !enabled {
+        return None;
+    }
+    std::env::var_os(format!("KEEPWATCH_TEST_{name}")).filter(|v| !v.is_empty())
+}
+
+/// `test_override_if(cfg!(debug_assertions), name)`.
+pub fn test_override(name: &str) -> Option<std::ffi::OsString> {
+    test_override_if(cfg!(debug_assertions), name)
+}
+
+/// A debug-only stand-in path: absolute, or ignored.
+pub fn test_path(name: &str) -> Option<PathBuf> {
+    test_override(name).map(PathBuf::from).filter(|p| p.is_absolute())
+}
+
 /// Absolute path of a system tool, or None if it isn't installed.
 /// Debug builds (tests only) accept `KEEPWATCH_TEST_<NAME>` as a stand-in.
 pub fn system_program(name: &str) -> Option<PathBuf> {
-    #[cfg(debug_assertions)]
-    {
-        let var = format!("KEEPWATCH_TEST_{}", name.to_uppercase().replace('-', "_"));
-        if let Some(p) = std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_absolute()) {
-            return Some(p);
-        }
+    if let Some(p) = test_path(&name.to_uppercase().replace('-', "_")) {
+        return Some(p);
     }
     #[cfg(windows)]
     {
@@ -48,6 +63,91 @@ pub fn system_program(name: &str) -> Option<PathBuf> {
     {
         SYSTEM_DIRS.iter().map(|d| Path::new(d).join(name)).find(|p| p.is_file())
     }
+}
+
+/// Our own user id (Unix).
+#[cfg(unix)]
+pub fn my_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata("/proc/self").ok().map(|m| m.uid())
+}
+
+/// `dir`, created (mode 0700) if missing, if it is a real folder of ours that
+/// others can't write to. Never a symlink.
+pub fn own_dir(dir: &Path) -> Option<PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+        if !dir.is_absolute() {
+            return None;
+        }
+        if let Some(parent) = dir.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(dir);
+        let meta = std::fs::symlink_metadata(dir).ok()?;
+        let ok = meta.is_dir() && Some(meta.uid()) == my_uid() && meta.permissions().mode() & 0o022 == 0;
+        ok.then(|| dir.to_path_buf())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::create_dir_all(dir);
+        let meta = std::fs::symlink_metadata(dir).ok()?;
+        (meta.is_dir() && !meta.file_type().is_symlink()).then(|| dir.to_path_buf())
+    }
+}
+
+/// Open options that never follow a symlink at the last path component, and
+/// create files as 0600.
+fn private_options() -> std::fs::OpenOptions {
+    #[allow(unused_mut)]
+    let mut opts = std::fs::OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    }
+    opts
+}
+
+/// Replace `dir/name` with `data` atomically (a 0600 temp file, then rename).
+/// Neither the temp file nor the target is followed if it is a symlink: the
+/// temp is created fresh and rename replaces a link, never its target.
+pub fn write_atomic(dir: &Path, name: &str, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = private_options().write(true).create_new(true).open(&tmp)?;
+    let written = f.write_all(data).and_then(|()| f.sync_all());
+    drop(f);
+    if let Err(e) = written.and_then(|()| std::fs::rename(&tmp, dir.join(name))) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Open `path` for appending (created 0600), refusing a symlink.
+pub fn open_append_private(path: &Path) -> std::io::Result<std::fs::File> {
+    private_options().append(true).create(true).open(path)
+}
+
+/// A regular file (not a symlink) of at most `cap` bytes, lossily decoded.
+pub fn read_regular_capped(path: &Path, cap: u64) -> Option<String> {
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > cap {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let mut buf = Vec::new();
+    file.take(cap).read_to_end(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Text from other software, made safe for one log or menu line: control
+/// characters dropped, at most `max` characters.
+pub fn clean_line(s: &str, max: usize) -> String {
+    s.chars().filter(|c| !c.is_control()).take(max).collect()
 }
 
 /// Run a command with `LC_ALL=C`, no stdin, and a deadline. Returns stdout
@@ -148,6 +248,47 @@ mod tests {
         assert_eq!(describe_bytes(327_155_712), "312 MB");
         assert_eq!(describe_bytes(10), "10 bytes");
         assert_eq!(describe_bytes(u64::MAX), "17179869184.0 GB");
+    }
+
+    #[test]
+    fn test_overrides_are_off_unless_enabled() {
+        std::env::set_var("KEEPWATCH_TEST_UTIL_PROBE", "/x");
+        assert_eq!(test_override_if(false, "UTIL_PROBE"), None, "release builds never read stand-ins");
+        assert_eq!(test_override_if(true, "UTIL_PROBE").as_deref(), Some(std::ffi::OsStr::new("/x")));
+        assert_eq!(test_override_if(true, "UTIL_PROBE_MISSING"), None);
+        std::env::remove_var("KEEPWATCH_TEST_UTIL_PROBE");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_writes_are_private_and_never_follow_links() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("kw-util-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let dir = own_dir(&dir).expect("own dir");
+        write_atomic(&dir, "a.txt", b"one").unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one");
+        assert_eq!(std::fs::metadata(dir.join("a.txt")).unwrap().permissions().mode() & 0o777, 0o600);
+        // A symlink at the target is replaced, not written through.
+        let victim = dir.join("victim");
+        std::fs::write(&victim, "keep").unwrap();
+        std::os::unix::fs::symlink(&victim, dir.join("b.txt")).unwrap();
+        write_atomic(&dir, "b.txt", b"new").unwrap();
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert!(!std::fs::symlink_metadata(dir.join("b.txt")).unwrap().file_type().is_symlink());
+        // Appending refuses a symlink.
+        std::os::unix::fs::symlink(&victim, dir.join("log")).unwrap();
+        assert!(open_append_private(&dir.join("log")).is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        assert_eq!(read_regular_capped(&dir.join("log"), 100), None, "symlinks aren't read");
+        assert_eq!(read_regular_capped(&dir.join("a.txt"), 2), None, "too big");
+        // A link as the folder itself is refused.
+        std::os::unix::fs::symlink(&dir, dir.with_extension("link")).unwrap();
+        assert_eq!(own_dir(&dir.with_extension("link")), None);
+        assert_eq!(own_dir(Path::new("relative")), None);
+        let _ = std::fs::remove_file(dir.with_extension("link"));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(clean_line("a\nb\u{1b}[31mc", 3), "ab[");
     }
 
     #[test]

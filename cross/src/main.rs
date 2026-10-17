@@ -2,32 +2,17 @@
 //! codes as the macOS CLI, as far as each platform allows. See `cli::USAGE`.
 #![deny(unsafe_code)]
 
-mod agents;
-mod apps;
-mod cli;
-mod duration;
-mod inhibit;
-mod lock;
-mod ports;
-mod power;
-mod privacy;
-mod procs;
-mod util;
-#[cfg(windows)]
-mod win;
-
-use cli::{AwakeRequest, Command};
+use keepwatch::cli::{self, AwakeRequest, Command, LidRequest};
+use keepwatch::lock::{self, Kind, Owner, StopResult};
+use keepwatch::session::{AwakeEnd, AwakeMode, AwakeSession};
+use keepwatch::{agents, apps, duration, inhibit, lid, ports, power, privacy, procs, util, VERSION};
 use serde::Serialize;
-use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-const VERSION: &str = "0.3.0";
 const PLATFORM: &str = if cfg!(windows) { "windows" } else { "linux" };
 const PLATFORM_NAME: &str = if cfg!(windows) { "Windows" } else { "Linux" };
-/// After the last agent exits, `awake --agents` waits this long (as on macOS).
-const AGENT_GRACE_SECONDS: f64 = 120.0;
 
 fn out(s: &str) {
     println!("{s}");
@@ -72,7 +57,9 @@ fn run(command: Command) -> i32 {
         Command::Awake(request) => awake(request),
         Command::Run { command, display } => run_child(&command, display),
         Command::Mic { .. } => not_yet("mic mute|unmute"),
-        Command::LidStart { .. } | Command::LidEnd => not_yet("lid sessions"),
+        Command::LidStart(request) => lid_start(request),
+        Command::LidEnd => lid_end(),
+        Command::LidStatus { json } => lid_status(json),
         Command::Security { .. } => not_yet("security"),
     }
 }
@@ -96,6 +83,8 @@ struct StatusReport {
     sleep: SleepJson,
     agents: Vec<String>,
     privacy: PrivacyJson,
+    /// Linux lid-closed session (null on Windows). Not in the macOS contract.
+    lid_session: Option<lid::LidSessionJson>,
 }
 
 #[derive(Serialize)]
@@ -115,7 +104,8 @@ struct PowerJson {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SleepJson {
-    /// macOS `pmset disablesleep`; no equivalent is read yet.
+    /// macOS `pmset disablesleep`. Linux: whether any app (a lid session,
+    /// for one) holds a block inhibitor on the lid switch.
     sleep_disabled: Option<bool>,
     prevented_by: Option<Vec<String>>,
     keepwatch_holding: bool,
@@ -133,10 +123,10 @@ struct PrivacyJson {
 fn status_report() -> StatusReport {
     let p = power::current();
     let procs = procs::snapshot_light();
-    let mut agent_names: Vec<String> = agents::running_agents(&own_running(&procs)).into_keys().collect();
+    let mut agent_names: Vec<String> = agents::running_agents(&procs::own_running(&procs)).into_keys().collect();
     agent_names.sort();
     let me = std::process::id();
-    // Another keepwatch of ours that is holding (`awake` or `run`).
+    // Another keepwatch of ours that is holding (`awake`, `run` or `lid start`).
     let other_keepwatch = procs.iter().any(|p| {
         p.own
             && p.pid != me
@@ -144,20 +134,29 @@ fn status_report() -> StatusReport {
             && matches!(p.arguments.first().map(String::as_str), Some("awake" | "run"))
             && !p.arguments.iter().any(|a| a == "--off")
     });
+    let tray_running = procs.iter().any(|p| p.own && p.name.eq_ignore_ascii_case(lock::TRAY_NAME));
     #[cfg(target_os = "linux")]
-    let (prevented_by, inhibitor_holding) = match inhibit::current_inhibitors() {
-        Some(l) => (Some(inhibit::prevented_by(&l)), l.iter().any(|i| i.who == "keepwatch" && i.mode == "block")),
-        None => (None, false),
+    let (prevented_by, inhibitor_holding, sleep_disabled) = match inhibit::current_inhibitors() {
+        Some(l) => (
+            Some(inhibit::prevented_by(&l)),
+            l.iter().any(|i| i.who == "keepwatch" && i.mode == "block"),
+            Some(inhibit::lid_switch_blocked(&l)),
+        ),
+        None => (None, false, None),
     };
     // `powercfg /requests` needs an administrator, so other apps' requests are unknown.
     #[cfg(not(target_os = "linux"))]
-    let (prevented_by, inhibitor_holding): (Option<Vec<String>>, bool) = (None, false);
-    let holding = other_keepwatch || inhibitor_holding;
+    let (prevented_by, inhibitor_holding, sleep_disabled): (Option<Vec<String>>, bool, Option<bool>) =
+        (None, false, None);
+    let lid_session = if cfg!(target_os = "linux") { Some(lid::current_json()) } else { None };
+    let lid_active = lid_session.as_ref().is_some_and(|l| l.active);
+    let awake_active = lock::live(Kind::Awake).is_some();
+    let holding = other_keepwatch || inhibitor_holding || lid_active || awake_active;
     let pr = privacy::current();
     StatusReport {
         version: VERSION.into(),
         platform: PLATFORM.into(),
-        app_running: false,
+        app_running: tray_running,
         power: PowerJson {
             battery_percent: p.battery_percent,
             on_battery: p.on_battery,
@@ -169,7 +168,11 @@ fn status_report() -> StatusReport {
             thermal: None,
             lid_closed: p.lid_closed,
         },
-        sleep: SleepJson { sleep_disabled: None, prevented_by, keepwatch_holding: holding },
+        sleep: SleepJson {
+            sleep_disabled: sleep_disabled.map(|b| b || lid_active).or(lid_active.then_some(true)),
+            prevented_by,
+            keepwatch_holding: holding,
+        },
         agents: agent_names,
         privacy: PrivacyJson {
             mic_in_use: pr.mic_in_use,
@@ -177,6 +180,7 @@ fn status_report() -> StatusReport {
             mic_muted: None,
             mic_users: pr.mic_users,
         },
+        lid_session,
     }
 }
 
@@ -228,16 +232,20 @@ impl StatusReport {
             privacy.push_str(&format!(" (mic: {})", self.privacy.mic_users.join(", ")));
         }
         lines.push(format!("Privacy   {privacy}"));
-        lines.push(format!("App       not available on {PLATFORM_NAME} yet"));
+        if let Some(l) = &self.lid_session {
+            lines.push(format!("Lid mode  {}", lid_line(l)));
+        }
+        if cfg!(windows) {
+            lines.push(format!("App       not available on {PLATFORM_NAME} yet"));
+        } else {
+            lines
+                .push(format!("App       keepwatch-tray {}", if self.app_running { "running" } else { "not running" }));
+        }
         lines.join("\n")
     }
 }
 
 // MARK: - agents
-
-fn own_running(procs: &[procs::Proc]) -> Vec<agents::RunningProcess> {
-    procs.iter().filter(|p| p.own && agents::is_candidate(&p.name)).map(procs::Proc::running).collect()
-}
 
 #[derive(Serialize)]
 struct AgentRow {
@@ -250,38 +258,11 @@ struct AgentRow {
     title: Option<String>,
 }
 
-struct Session {
-    pid: u32,
-    agent: &'static str,
-    folder: Option<String>,
-    started: Option<u64>,
-    cpu_ms: u64,
-}
-
-/// The user's agent sessions, oldest first.
-fn sessions(procs: &[procs::Proc]) -> Vec<Session> {
-    let mut s: Vec<Session> = procs
-        .iter()
-        .filter(|p| p.own)
-        .filter_map(|p| {
-            Some(Session {
-                pid: p.pid,
-                agent: agents::agent_name(&p.running())?,
-                folder: p.cwd.clone(),
-                started: p.started,
-                cpu_ms: p.cpu_ms,
-            })
-        })
-        .collect();
-    s.sort_by_key(|x| (x.started.unwrap_or(u64::MAX), x.pid));
-    s
-}
-
 /// Above this share of one core, a session counts as working (as on macOS).
 const WORKING_THRESHOLD: f64 = 0.03;
 
 fn agents_command(json: bool) -> i32 {
-    let list = sessions(&procs::snapshot());
+    let list = procs::sessions(&procs::snapshot());
     let started = Instant::now();
     let pids: Vec<u32> = list.iter().map(|s| s.pid).collect();
     let after = if list.is_empty() {
@@ -322,7 +303,7 @@ fn agents_command(json: bool) -> i32 {
 }
 
 fn agent_stop(pid: u32) -> i32 {
-    let Some(session) = sessions(&procs::snapshot_light()).into_iter().find(|s| s.pid == pid) else {
+    let Some(session) = procs::sessions(&procs::snapshot_light()).into_iter().find(|s| s.pid == pid) else {
         err(&format!("pid {pid} is not a running agent session"));
         return 2;
     };
@@ -433,38 +414,19 @@ fn nap(d: Duration, flag: &AtomicBool) {
     }
 }
 
-fn own_start_time() -> u64 {
-    let me = std::process::id();
-    procs::snapshot_of(&[me]).first().and_then(|p| p.started).unwrap_or(0)
-}
-
-fn stop_running_awake(pid: u32) -> bool {
-    if !procs::terminate(pid) {
-        return false;
-    }
-    // Give it a moment to clean up after itself.
-    for _ in 0..30 {
-        if procs::snapshot_of(&[pid]).is_empty() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    lock::remove_if(pid);
-    true
-}
-
 fn awake(request: AwakeRequest) -> i32 {
     if request == AwakeRequest::Off {
-        return match lock::live_awake() {
-            Some(pid) if stop_running_awake(pid) => {
-                out(&format!("Stopped 'keepwatch awake' (pid {pid}); your computer can sleep again."));
+        return match lock::stop(Kind::Awake) {
+            StopResult::Stopped(l) => {
+                let who = if l.owner == Owner::Tray { "the tray's keep-awake" } else { "'keepwatch awake'" };
+                out(&format!("Stopped {who} (pid {}); your computer can sleep again.", l.pid));
                 0
             }
-            Some(pid) => {
-                err(&format!("couldn't stop 'keepwatch awake' (pid {pid})"));
+            StopResult::Failed(l) => {
+                err(&format!("couldn't stop 'keepwatch awake' (pid {})", l.pid));
                 2
             }
-            None => {
+            StopResult::NotRunning => {
                 out("Nothing to turn off: no 'keepwatch awake' is running for you.");
                 0
             }
@@ -472,89 +434,200 @@ fn awake(request: AwakeRequest) -> i32 {
     }
     let flag = stop_flag();
     // A new request replaces the running one, as it does in the macOS app.
-    if let Some(pid) = lock::live_awake() {
-        if stop_running_awake(pid) {
-            out(&format!("Replaced the running 'keepwatch awake' (pid {pid})."));
-        }
+    if let StopResult::Stopped(l) = lock::stop(Kind::Awake) {
+        out(&format!("Replaced the running 'keepwatch awake' (pid {}).", l.pid));
     }
-    let label = match request {
-        AwakeRequest::Minutes(m) => format!("keepwatch awake: {m} min"),
-        AwakeRequest::WhileAgentsRun => "keepwatch awake: while agents run".into(),
-        _ => "keepwatch awake: until stopped".into(),
+    let mode = match request {
+        AwakeRequest::Minutes(m) => AwakeMode::Minutes(m),
+        AwakeRequest::WhileAgentsRun => AwakeMode::WhileAgentsRun,
+        _ => AwakeMode::Indefinitely,
     };
-    let mut holder = match inhibit::Holder::start(&label, false) {
-        Ok(h) => h,
+    let mut session = match AwakeSession::start(mode, Owner::Cli) {
+        Ok((s, warning)) => {
+            if let Some(w) = warning {
+                err(&w);
+            }
+            s
+        }
         Err(e) => {
             err(&e);
             return 2;
         }
     };
-    let me = std::process::id();
-    if let Err(e) = lock::write(lock::LockInfo { pid: me, started: own_start_time() }) {
-        err(&format!("'keepwatch awake --off' won't find this one: {e}"));
+    match mode {
+        AwakeMode::Minutes(m) => out(&format!(
+            "Keeping your computer awake for {} (Ctrl-C or 'keepwatch awake --off' to stop)…",
+            duration::describe(f64::from(m) * 60.0)
+        )),
+        AwakeMode::WhileAgentsRun => out("Keeping your computer awake while agents run (Ctrl-C to stop)…"),
+        AwakeMode::Indefinitely => out("Keeping your computer awake until 'keepwatch awake --off' or Ctrl-C…"),
     }
-    let mut lost = false;
-    match request {
-        AwakeRequest::Minutes(m) => {
-            let secs = u64::from(m).saturating_mul(60);
-            out(&format!(
-                "Keeping your computer awake for {} (Ctrl-C or 'keepwatch awake --off' to stop)…",
-                duration::describe(secs as f64)
-            ));
-            let end = Instant::now() + Duration::from_secs(secs);
-            while !flag.load(Ordering::SeqCst) && Instant::now() < end {
-                if !holder.alive() {
-                    lost = true;
-                    break;
-                }
-                nap(end.saturating_duration_since(Instant::now()).min(Duration::from_secs(2)), &flag);
+    let mut last_agents: Option<Instant> = None;
+    let end = loop {
+        if flag.load(Ordering::SeqCst) {
+            break None;
+        }
+        if let Some(end) = session.check() {
+            break Some(end);
+        }
+        if mode == AwakeMode::WhileAgentsRun && last_agents.is_none_or(|t| t.elapsed() >= Duration::from_secs(2)) {
+            last_agents = Some(Instant::now());
+            let (finished, end) = session.agents_tick(&procs::running_agent_names());
+            for name in &finished {
+                out(&format!("{name} finished."));
+            }
+            if end.is_some() {
+                break end;
             }
         }
-        AwakeRequest::WhileAgentsRun => {
-            out("Keeping your computer awake while agents run (Ctrl-C to stop)…");
-            let mut watch = agents::AgentsWatch::new(AGENT_GRACE_SECONDS);
-            let clock = Instant::now();
-            let mut ever_seen = false;
-            while !flag.load(Ordering::SeqCst) {
-                if !holder.alive() {
-                    lost = true;
-                    break;
-                }
-                let running: BTreeSet<String> =
-                    agents::running_agents(&own_running(&procs::snapshot_light())).into_keys().collect();
-                ever_seen |= !running.is_empty();
-                let tick = watch.tick(clock.elapsed().as_secs_f64(), &running);
-                for name in &tick.finished {
-                    out(&format!("{name} finished."));
-                }
-                if ever_seen && !tick.hold {
-                    out("All agents finished; your computer can sleep again.");
-                    break;
-                }
-                nap(Duration::from_secs(2), &flag);
-            }
+        nap(Duration::from_secs(1), &flag);
+    };
+    session.finish();
+    match end {
+        Some(AwakeEnd::Lost) => {
+            err("the keep-awake lock was lost (systemd-inhibit exited); your computer can sleep again");
+            2
         }
-        _ => {
-            out("Keeping your computer awake until 'keepwatch awake --off' or Ctrl-C…");
-            while !flag.load(Ordering::SeqCst) {
-                if !holder.alive() {
-                    lost = true;
-                    break;
-                }
-                nap(Duration::from_secs(2), &flag);
-            }
+        Some(AwakeEnd::AgentsFinished) => {
+            out("All agents finished; your computer can sleep again.");
+            0
+        }
+        Some(AwakeEnd::StopRequested) => {
+            out("Stopped; your computer can sleep again.");
+            0
+        }
+        Some(AwakeEnd::TimeUp) => 0,
+        None => {
+            out("Stopped; your computer can sleep again.");
+            0
         }
     }
-    holder.release();
-    lock::remove_if(me);
-    if lost {
-        err("the keep-awake lock was lost (systemd-inhibit exited); your computer can sleep again");
-        return 2;
+}
+
+// MARK: - lid sessions
+
+fn lid_line(l: &lid::LidSessionJson) -> String {
+    if l.active {
+        let owner = if l.owner.as_deref() == Some("tray") { "the tray" } else { "keepwatch lid start" };
+        let mut parts = vec![format!("on (pid {}, {owner})", l.pid.unwrap_or(0))];
+        if let Some(m) = l.after_lid_closed_minutes {
+            parts.push(format!("sleeps {} after the lid closes", duration::describe((m as f64) * 60.0)));
+        }
+        if l.lid_closed_since.is_some() {
+            parts.push("lid closed now".into());
+        }
+        parts.join(", ")
+    } else {
+        match &l.last_end_reason {
+            Some(r) => format!("off (last ended: {r})"),
+            None => "off".into(),
+        }
     }
-    if flag.load(Ordering::SeqCst) {
-        out("Stopped; your computer can sleep again.");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn lid_start(_request: LidRequest) -> i32 {
+    not_yet("lid sessions")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn lid_end() -> i32 {
+    not_yet("lid sessions")
+}
+
+#[cfg(not(target_os = "linux"))]
+fn lid_status(_json: bool) -> i32 {
+    not_yet("lid sessions")
+}
+
+#[cfg(target_os = "linux")]
+fn lid_status(json: bool) -> i32 {
+    let l = lid::current_json();
+    if json {
+        out(&util::json_string(&l));
+    } else {
+        out(&format!("Lid session {}", lid_line(&l)));
     }
     0
+}
+
+#[cfg(target_os = "linux")]
+fn lid_end() -> i32 {
+    match lock::stop(Kind::Lid) {
+        StopResult::Stopped(l) => {
+            out(&format!("Ended the lid session (pid {}); the lid works normally again.", l.pid));
+            0
+        }
+        StopResult::Failed(l) => {
+            err(&format!("couldn't end the lid session (pid {})", l.pid));
+            2
+        }
+        StopResult::NotRunning => {
+            out("No lid session is running; the lid works normally.");
+            0
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn lid_start(request: LidRequest) -> i32 {
+    let flag = stop_flag();
+    match lock::stop(Kind::Lid) {
+        StopResult::Stopped(l) => out(&format!("Replaced the running lid session (pid {}).", l.pid)),
+        StopResult::Failed(l) => {
+            err(&format!("a lid session is already running (pid {}) and didn't stop; try 'keepwatch lid end'", l.pid));
+            return 2;
+        }
+        StopResult::NotRunning => {}
+    }
+    let plan =
+        lid::LidPlan::new(request.half_hours, request.sleep_at, request.until_agents_done, request.allow_on_battery);
+    let mut session = match lid::LidSession::start(plan, Owner::Cli) {
+        Ok(s) => s,
+        Err(e) => {
+            err(&e);
+            return 2;
+        }
+    };
+    out(&format!(
+        "Lid session on: this computer keeps running with the lid closed. It {}, and after 12 h at most. \
+         Ctrl-C or 'keepwatch lid end' to end it.",
+        session.plan().describe()
+    ));
+    let tick = lid::rule_tick();
+    let mut last_rules: Option<Instant> = None;
+    let reason = loop {
+        if flag.load(Ordering::SeqCst) {
+            break lid::EndReason::Interrupted;
+        }
+        if let Some(r) = session.check() {
+            break r;
+        }
+        if last_rules.is_none_or(|t| t.elapsed() >= tick) {
+            last_rules = Some(Instant::now());
+            let sensors = lid::read_sensors(session.plan().until_agents_done);
+            let (change, end) = session.step(&sensors);
+            match change {
+                Some(lid::LidChange::Closed) => out(&format!(
+                    "Lid closed: sleeping in {} unless it opens.",
+                    duration::describe(session.closed_left().unwrap_or(0.0))
+                )),
+                Some(lid::LidChange::Opened) => out("Lid opened: the timer starts again when it closes."),
+                None => {}
+            }
+            if let Some(r) = end {
+                break r;
+            }
+        }
+        nap(tick.min(Duration::from_secs(1)), &flag);
+    };
+    let outcome = session.finish(reason);
+    out(&format!("Lid session ended: {}. {}", reason.describe(), outcome.describe()));
+    if reason == lid::EndReason::InhibitorLost {
+        2
+    } else {
+        0
+    }
 }
 
 /// `PATH` lookup that also finds `npm.cmd`-style scripts on Windows, which
@@ -584,7 +657,7 @@ fn run_child(argv: &[String], display: bool) -> i32 {
     };
     // Ctrl-C reaches the child from the terminal; keepwatch ignores it and waits.
     let _ignore_ctrl_c = stop_flag();
-    let mut holder = match inhibit::Holder::start(&format!("keepwatch run: {program}"), display) {
+    let mut holder = match inhibit::Holder::start(&format!("keepwatch run: {program}"), display, inhibit::Hold::Awake) {
         Ok(h) => h,
         Err(e) => {
             err(&e);
@@ -683,6 +756,7 @@ mod tests {
                 mic_muted: None,
                 mic_users: vec![],
             },
+            lid_session: Some(lid::LidSessionJson::default()),
         };
         let json = util::json_string(&r);
         for key in [
@@ -706,6 +780,7 @@ mod tests {
             "cameraInUse",
             "micMuted",
             "micUsers",
+            "lidSession",
         ] {
             assert!(json.contains(&format!("\"{key}\"")), "{key}");
         }
