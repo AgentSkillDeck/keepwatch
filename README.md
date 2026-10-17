@@ -50,6 +50,10 @@ Built with Swift and SwiftUI for macOS 14 and later. It runs on Apple Silicon an
 
 Without the app, `keepwatch awake` and `keepwatch run` hold the Mac awake themselves. Lid-closed sessions (`keepwatch lid start`) need the app, because it shows the password prompt and runs the watchdog.
 
+## Linux and Windows (command line, beta)
+
+A Rust port of the `keepwatch` command runs on Linux and Windows: `run`, `awake`, `status`, `agents`, `ports`, `privacy` and `apps`, with the same JSON fields and exit codes. There is no tray app on these platforms yet. See [cross/README.md](cross/README.md) for what works, what doesn't yet, and how to build it.
+
 ## What it does
 
 **Stay awake**

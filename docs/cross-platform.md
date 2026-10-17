@@ -1,6 +1,8 @@
-# Linux and Windows: plan (not started)
+# Linux and Windows: plan (phase 1 in progress)
 
-Status: proposal, 2026-10-15. Keepwatch v0.1 is macOS-only. Every system feature in it uses Mac APIs (IOKit power assertions, `pmset`, `AppleClamshellState`, CoreAudio, CoreMediaIO, `SMAppService`, SwiftUI `MenuBarExtra`), so other platforms need a separate implementation, not a recompile.
+Status: phase 1 (the command line) is built in [`cross/`](../cross/README.md), beta, 2026-10-17. Linux is tested in a container; Windows is compile-checked and runs its tests in CI only. Phase 2: lid-closed sessions, mic mute, security checks, a tray app.
+
+Keepwatch v0.1 was macOS-only. Every system feature in it uses Mac APIs (IOKit power assertions, `pmset`, `AppleClamshellState`, CoreAudio, CoreMediaIO, `SMAppService`, SwiftUI `MenuBarExtra`), so other platforms need a separate implementation, not a recompile.
 
 ## What maps, and how
 
@@ -26,3 +28,8 @@ Status: proposal, 2026-10-15. Keepwatch v0.1 is macOS-only. Every system feature
 ## Effort
 
 About 1–2 weeks for a solid CLI on both platforms, plus about 1 week per tray app. The lid-closed mode on Windows (persistent `powercfg` change) needs the most care.
+
+## Revisions
+
+- 2026-10-17: phase 1. A Rust `keepwatch` CLI for Linux and Windows in `cross/` (status, awake, run, agents, ports, privacy, apps), with CI on Ubuntu and Windows. Process listing uses the `sysinfo` crate on both platforms.
+- 2026-10-15: proposal.

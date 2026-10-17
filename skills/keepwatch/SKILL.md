@@ -1,6 +1,6 @@
 ---
 name: keepwatch
-description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?", "keep it awake for 2 days", "which agents are running?", "stop that agent", "start a lid session" or "end the lid session". macOS only.
+description: Keep the user's Mac awake while long agent work runs, and check power, sleep, agents, mic and camera, using the `keepwatch` command (Keepwatch for macOS). Use before long builds, test suites, model downloads, long agent loops, or when the user says "don't let my Mac sleep", "keep it awake while this runs", "is my mic or camera on?", "what's keeping my Mac awake?", "what's on port 3000?", "keep it awake for 2 days", "which agents are running?", "stop that agent", "start a lid session" or "end the lid session". macOS; Linux and Windows in beta (command line only).
 license: Apache-2.0
 compatibility: macOS 14+. Needs the `keepwatch` command, from the Keepwatch app (https://github.com/AgentSkillDeck/keepwatch; Dashboard → "Install the keepwatch command") or installed on its own. Lid-closed sessions also need the app.
 ---
@@ -91,6 +91,10 @@ keepwatch agents stop PID        # quit one session (only works on agent session
 ```
 
 Only stop a session when the user asks for that specific one. Never stop your own session: match the `folder` and `started` fields before you do.
+
+## Linux and Windows (beta)
+
+The same `keepwatch` command runs on Linux and Windows ([cross/README.md](https://github.com/AgentSkillDeck/keepwatch/blob/main/cross/README.md)), with the same commands and JSON fields. `status --json` adds `"platform": "linux"` or `"windows"`, and fields the platform can't report are `null`. There is no app there, so `awake` blocks until the time is up or `keepwatch awake --off`; prefer `run --`. `mic`, `lid` and `security` exit with status 1 ("not available"). On Linux, `awake` and `run` need `systemd-inhibit` and exit with status 2 without it.
 
 ## Rules
 
