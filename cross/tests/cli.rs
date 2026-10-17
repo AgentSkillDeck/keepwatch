@@ -18,7 +18,7 @@ fn temp_dir(tag: &str) -> PathBuf {
 #[test]
 fn version_and_usage_errors() {
     let out = keepwatch().arg("version").output().unwrap();
-    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "keepwatch 0.3.0");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "keepwatch 0.4.0-beta.1");
     assert_eq!(out.status.code(), Some(0));
     let bad = keepwatch().args(["frobnicate"]).output().unwrap();
     assert_eq!(bad.status.code(), Some(1));
