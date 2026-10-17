@@ -82,7 +82,7 @@ impl AwakeSession {
         if let Err(e) = lock::write(Kind::Awake, LockInfo { pid, started: crate::procs::own_start_time() }) {
             warning = Some(format!("'keepwatch awake --off' won't find this one: {e}"));
         }
-        if lock::stop_requested(Kind::Awake, pid) {
+        if lock::stop_requested(Kind::Awake, pid).is_some() {
             lock::clear_stop(Kind::Awake);
         }
         let state = AwakeState {
@@ -125,7 +125,7 @@ impl AwakeSession {
         if !self.holder.as_mut().is_some_and(Holder::alive) {
             return Some(AwakeEnd::Lost);
         }
-        if lock::stop_requested(Kind::Awake, self.pid) {
+        if lock::stop_requested(Kind::Awake, self.pid).is_some() {
             return Some(AwakeEnd::StopRequested);
         }
         if self.deadline.is_some_and(|d| Instant::now() >= d) {
@@ -156,7 +156,7 @@ impl AwakeSession {
             h.release();
         }
         lock::remove_if(Kind::Awake, self.pid);
-        if lock::stop_requested(Kind::Awake, self.pid) {
+        if lock::stop_requested(Kind::Awake, self.pid).is_some() {
             lock::clear_stop(Kind::Awake);
         }
     }

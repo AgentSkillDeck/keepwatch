@@ -111,8 +111,10 @@ pub enum EndReason {
     },
     LidClosedLimit,
     AgentsDone,
-    /// `keepwatch lid end`, the tray's End, or a newer session replaced it.
+    /// `keepwatch lid end`, or the tray's End.
     StopRequested,
+    /// A new lid session took over: release, but never suspend.
+    Replaced,
     /// Ctrl-C.
     Interrupted,
     /// The tray quit.
@@ -133,6 +135,7 @@ impl EndReason {
             EndReason::LidClosedLimit => "lid-closed-limit",
             EndReason::AgentsDone => "agents-done",
             EndReason::StopRequested => "stop-requested",
+            EndReason::Replaced => "replaced",
             EndReason::Interrupted => "interrupted",
             EndReason::Quit => "tray-quit",
             EndReason::InhibitorLost => "inhibitor-lost",
@@ -149,6 +152,7 @@ impl EndReason {
             EndReason::LidClosedLimit => "the lid was closed for the time you chose".into(),
             EndReason::AgentsDone => "all agents finished".into(),
             EndReason::StopRequested => "you ended it".into(),
+            EndReason::Replaced => "a new lid session replaced it".into(),
             EndReason::Interrupted => "it was interrupted (Ctrl-C)".into(),
             EndReason::Quit => "the tray app quit".into(),
             EndReason::InhibitorLost => "the lid lock was lost (systemd-inhibit exited)".into(),
@@ -431,6 +435,8 @@ pub fn current_json() -> LidSessionJson {
 /// What happened about sleep when a session ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SuspendOutcome {
+    /// A new session took over, so nothing was suspended.
+    Replaced,
     LidOpen,
     LidUnknown,
     /// logind counts it as docked and ignores the lid by default; so do we.
@@ -442,6 +448,7 @@ pub enum SuspendOutcome {
 impl SuspendOutcome {
     pub fn describe(&self) -> String {
         match self {
+            SuspendOutcome::Replaced => "The new session keeps it running.".into(),
             SuspendOutcome::LidOpen => "The lid is open, so it stays on; it can sleep normally again.".into(),
             SuspendOutcome::LidUnknown => "The lid state can't be read, so keepwatch didn't suspend it.".into(),
             SuspendOutcome::Docked => "It's docked, so it follows the system's docked setting.".into(),
@@ -552,7 +559,7 @@ mod live {
                 holder.release();
                 return Err(format!("couldn't record the lid session, so 'keepwatch lid end' couldn't find it: {e}"));
             }
-            if lock::stop_requested(Kind::Lid, pid) {
+            if lock::stop_requested(Kind::Lid, pid).is_some() {
                 lock::clear_stop(Kind::Lid);
             }
             let mut session = LidSession {
@@ -612,7 +619,10 @@ mod live {
             if !self.holder.as_mut().is_some_and(Holder::alive) {
                 return Some(EndReason::InhibitorLost);
             }
-            lock::stop_requested(Kind::Lid, self.pid).then_some(EndReason::StopRequested)
+            lock::stop_requested(Kind::Lid, self.pid).map(|intent| match intent {
+                lock::StopIntent::End => EndReason::StopRequested,
+                lock::StopIntent::Replace => EndReason::Replaced,
+            })
         }
 
         /// One rule tick with fresh readings.
@@ -641,9 +651,10 @@ mod live {
         pub fn finish(mut self, reason: EndReason) -> SuspendOutcome {
             self.release();
             let _ = super::log(&format!("ended {}: {}", reason.code(), reason.describe()));
-            let outcome = suspend_if_closed();
+            let outcome = if reason == EndReason::Replaced { SuspendOutcome::Replaced } else { suspend_if_closed() };
             let note = match &outcome {
                 SuspendOutcome::Requested => "asked to suspend (lid closed)".to_string(),
+                SuspendOutcome::Replaced => "replaced: not suspending".into(),
                 SuspendOutcome::Failed(why) => format!("suspend request failed: {why}"),
                 SuspendOutcome::Docked => "lid closed but docked: not suspending".into(),
                 SuspendOutcome::LidOpen => "lid open: not suspending".into(),
@@ -658,7 +669,7 @@ mod live {
                 h.release();
             }
             lock::remove_if(Kind::Lid, self.pid);
-            if lock::stop_requested(Kind::Lid, self.pid) {
+            if lock::stop_requested(Kind::Lid, self.pid).is_some() {
                 lock::clear_stop(Kind::Lid);
             }
         }

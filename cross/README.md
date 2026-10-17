@@ -36,11 +36,11 @@ keepwatch lid status [--json]
 - a thermal zone reaches 95 °C;
 - 12 hours have passed since the start (the hard cap).
 
-When it ends, keepwatch releases the inhibitor and, if the lid is still closed and the machine isn't docked, runs `systemctl suspend`. If that fails, logind acts on the closed lid itself once nothing blocks it. It won't start if it can't read the lid state (`/proc/acpi/button/lid`, else logind's `LidClosed`), if the battery is at or below 20%, or if it's too hot. If polkit refuses the inhibitor, it exits with status 2.
+When it ends, keepwatch releases the inhibitor and, if the lid is still closed and the machine isn't docked, runs `systemctl suspend`. Running `lid start` again replaces the session without suspending. If that fails, logind acts on the closed lid itself once nothing blocks it. It won't start if it can't read the lid state (`/proc/acpi/button/lid`, else logind's `LidClosed`), if the battery is at or below 20%, or if it's too hot. If polkit refuses the inhibitor, it exits with status 2.
 
 Safety: no root, no `sudo`, no setting that outlives the process. If keepwatch crashes or is killed, even with SIGKILL, the inhibitor goes with it and the lid works normally again. `lid end` (and the tray) ask the session to stop through a file in the private lock folder; the session logs why it ended. The log is `$XDG_STATE_HOME/keepwatch/lid.log` (default `~/.local/state/keepwatch/lid.log`): one line per start and end, mode 0600, cut to its newest half past 1 MB.
 
-`lid status --json` and `status --json` (`lidSession`) report: `active`, `owner` (`"cli"` or `"tray"`), `pid`, `startedAt`, `afterLidClosedMinutes`, `sleepAt`, `untilAgentsDone`, `allowOnBattery`, `minBatteryPercent`, `hardCapAt`, `lidClosedSince` (set while the lid is closed), and `lastEndedAt` / `lastEndReason` from the log (`lid-closed-limit`, `sleep-at`, `agents-done`, `low-battery`, `on-battery`, `thermal`, `hard-cap`, `stop-requested`, `interrupted`, `tray-quit`, `inhibitor-lost`). Times are ISO 8601; unknowns are `null`.
+`lid status --json` and `status --json` (`lidSession`) report: `active`, `owner` (`"cli"` or `"tray"`), `pid`, `startedAt`, `afterLidClosedMinutes`, `sleepAt`, `untilAgentsDone`, `allowOnBattery`, `minBatteryPercent`, `hardCapAt`, `lidClosedSince` (set while the lid is closed), and `lastEndedAt` / `lastEndReason` from the log (`lid-closed-limit`, `sleep-at`, `agents-done`, `low-battery`, `on-battery`, `thermal`, `hard-cap`, `stop-requested`, `replaced`, `interrupted`, `tray-quit`, `inhibitor-lost`). Times are ISO 8601; unknowns are `null`.
 
 Desktop power managers (GNOME's gsd-power, KDE's PowerDevil) also watch the lid. They normally respect logind's lid inhibitors, but this hasn't been checked on every desktop yet.
 
@@ -50,7 +50,7 @@ Desktop power managers (GNOME's gsd-power, KDE's PowerDevil) also watch the lid.
 
 The menu has a status line, **Keep awake** (1 h, 3 h, 8 h, until you turn it off, while agents run, turn off), **Laptop closed** (start for 1, 3, 6 or 12 hours, with *End when agents finish* and *Allow on battery*, off by default, and *End lid session*), a read-only **Agents** list, **Open at login** (writes `~/.config/autostart/keepwatch-tray.desktop`) and **Quit**. Quit ends the sessions the tray started.
 
-The tray runs the same code as the CLI, in-process, and uses the same lock files, so `keepwatch awake --off` and `keepwatch lid end` stop the tray's sessions, and sessions started in a terminal show up in the tray. It shows a desktop notification when a session ends. It checks for stop requests every second and reads the system every 5 seconds, and only redraws when something changed. SIGTERM ends it at once and releases its inhibitors; Ctrl-C and Quit end its sessions first.
+The tray runs the same code as the CLI, in-process, and uses the same lock files, so `keepwatch awake --off` and `keepwatch lid end` stop the tray's sessions, and sessions started in a terminal show up in the tray. It shows a desktop notification when a session ends. It reads the system every 5 seconds (and checks for stop requests every second while it holds a session), and only redraws when something changed. SIGTERM ends it at once and releases its inhibitors; Ctrl-C and Quit end its sessions first.
 
 ## Not yet
 

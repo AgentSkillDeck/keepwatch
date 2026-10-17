@@ -3,7 +3,7 @@
 #![deny(unsafe_code)]
 
 use keepwatch::cli::{self, AwakeRequest, Command, LidRequest};
-use keepwatch::lock::{self, Kind, Owner, StopResult};
+use keepwatch::lock::{self, Kind, Owner, StopIntent, StopResult};
 use keepwatch::session::{AwakeEnd, AwakeMode, AwakeSession};
 use keepwatch::{agents, apps, duration, inhibit, lid, ports, power, privacy, procs, util, VERSION};
 use serde::Serialize;
@@ -65,7 +65,8 @@ fn run(command: Command) -> i32 {
 }
 
 fn not_yet(what: &str) -> i32 {
-    err(&format!("{what} is not available on {PLATFORM_NAME} yet (macOS only for now)."));
+    let elsewhere = if what == "lid sessions" { "macOS and Linux only for now" } else { "macOS only for now" };
+    err(&format!("{what} is not available on {PLATFORM_NAME} yet ({elsewhere})."));
     1
 }
 
@@ -416,7 +417,7 @@ fn nap(d: Duration, flag: &AtomicBool) {
 
 fn awake(request: AwakeRequest) -> i32 {
     if request == AwakeRequest::Off {
-        return match lock::stop(Kind::Awake) {
+        return match lock::stop(Kind::Awake, StopIntent::End) {
             StopResult::Stopped(l) => {
                 let who = if l.owner == Owner::Tray { "the tray's keep-awake" } else { "'keepwatch awake'" };
                 out(&format!("Stopped {who} (pid {}); your computer can sleep again.", l.pid));
@@ -434,7 +435,7 @@ fn awake(request: AwakeRequest) -> i32 {
     }
     let flag = stop_flag();
     // A new request replaces the running one, as it does in the macOS app.
-    if let StopResult::Stopped(l) = lock::stop(Kind::Awake) {
+    if let StopResult::Stopped(l) = lock::stop(Kind::Awake, StopIntent::Replace) {
         out(&format!("Replaced the running 'keepwatch awake' (pid {}).", l.pid));
     }
     let mode = match request {
@@ -553,7 +554,7 @@ fn lid_status(json: bool) -> i32 {
 
 #[cfg(target_os = "linux")]
 fn lid_end() -> i32 {
-    match lock::stop(Kind::Lid) {
+    match lock::stop(Kind::Lid, StopIntent::End) {
         StopResult::Stopped(l) => {
             out(&format!("Ended the lid session (pid {}); the lid works normally again.", l.pid));
             0
@@ -572,7 +573,7 @@ fn lid_end() -> i32 {
 #[cfg(target_os = "linux")]
 fn lid_start(request: LidRequest) -> i32 {
     let flag = stop_flag();
-    match lock::stop(Kind::Lid) {
+    match lock::stop(Kind::Lid, StopIntent::Replace) {
         StopResult::Stopped(l) => out(&format!("Replaced the running lid session (pid {}).", l.pid)),
         StopResult::Failed(l) => {
             err(&format!("a lid session is already running (pid {}) and didn't stop; try 'keepwatch lid end'", l.pid));

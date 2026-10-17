@@ -165,20 +165,45 @@ pub fn live(kind: Kind) -> Option<Live> {
     }
 }
 
-/// Ask the owner `pid` to end its `kind` session (it checks about once a second).
-pub fn request_stop(kind: Kind, pid: u32) -> std::io::Result<()> {
-    let dir = lock_dir().ok_or_else(|| std::io::Error::other("no private folder for the stop file"))?;
-    crate::util::write_atomic(&dir, &kind.stop_name(), format!("{pid}\n").as_bytes())
+/// Why a session is asked to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopIntent {
+    /// The user ended it (`lid end`, `awake --off`, the tray's End).
+    End,
+    /// A new session takes over: a lid session must not suspend on the way out.
+    Replace,
 }
 
-/// Whether someone asked `pid` to end its `kind` session. A request naming
-/// another pid (left from an earlier session) is ignored.
-pub fn stop_requested(kind: Kind, pid: u32) -> bool {
-    let Some(dir) = lock_dir() else {
-        return false;
+/// The stop file's text: "PID end" or "PID replace".
+pub fn stop_text(pid: u32, intent: StopIntent) -> String {
+    let word = match intent {
+        StopIntent::End => "end",
+        StopIntent::Replace => "replace",
     };
-    let path = dir.join(kind.stop_name());
-    crate::util::read_regular_capped(&path, 64).and_then(|t| t.trim().parse::<u32>().ok()).is_some_and(|p| p == pid)
+    format!("{pid} {word}\n")
+}
+
+/// Parse a stop file for `pid`. A request naming another pid (left from an
+/// earlier session) is ignored; an unknown intent counts as End.
+pub fn parse_stop(text: &str, pid: u32) -> Option<StopIntent> {
+    let mut it = text.split_whitespace();
+    let named: u32 = it.next()?.parse().ok()?;
+    if named != pid {
+        return None;
+    }
+    Some(if it.next() == Some("replace") { StopIntent::Replace } else { StopIntent::End })
+}
+
+/// Ask the owner `pid` to stop its `kind` session (it checks about once a second).
+pub fn request_stop(kind: Kind, pid: u32, intent: StopIntent) -> std::io::Result<()> {
+    let dir = lock_dir().ok_or_else(|| std::io::Error::other("no private folder for the stop file"))?;
+    crate::util::write_atomic(&dir, &kind.stop_name(), stop_text(pid, intent).as_bytes())
+}
+
+/// Whether someone asked `pid` to stop its `kind` session, and why.
+pub fn stop_requested(kind: Kind, pid: u32) -> Option<StopIntent> {
+    let dir = lock_dir()?;
+    parse_stop(&crate::util::read_regular_capped(&dir.join(kind.stop_name()), 64)?, pid)
 }
 
 /// Remove a stop request.
@@ -229,7 +254,7 @@ fn wait_until(timeout: Duration, mut done: impl FnMut() -> bool) -> bool {
 }
 
 /// Stop the live `kind` session, whoever holds it (never this process).
-pub fn stop(kind: Kind) -> StopResult {
+pub fn stop(kind: Kind, intent: StopIntent) -> StopResult {
     let Some(live) = live(kind) else {
         return StopResult::NotRunning;
     };
@@ -247,7 +272,7 @@ pub fn stop(kind: Kind) -> StopResult {
     if kind == Kind::Awake && live.owner == Owner::Cli {
         return sigterm(live);
     }
-    if request_stop(kind, live.pid).is_ok() && wait_until(Duration::from_secs(10), || gone(kind, live.pid)) {
+    if request_stop(kind, live.pid, intent).is_ok() && wait_until(Duration::from_secs(10), || gone(kind, live.pid)) {
         clear_stop(kind);
         return StopResult::Stopped(live);
     }
@@ -285,6 +310,17 @@ mod tests {
         for bad in ["", "4242", "1 5", "0 5", "-3 5", "x y", "99999999999 1"] {
             assert_eq!(parse_lock(bad), None, "{bad}");
         }
+    }
+
+    #[test]
+    fn stop_files_name_a_pid_and_an_intent() {
+        assert_eq!(parse_stop(&stop_text(42, StopIntent::End), 42), Some(StopIntent::End));
+        assert_eq!(parse_stop(&stop_text(42, StopIntent::Replace), 42), Some(StopIntent::Replace));
+        assert_eq!(parse_stop("42\n", 42), Some(StopIntent::End), "older format: end");
+        assert_eq!(parse_stop("42 bogus", 42), Some(StopIntent::End), "unknown intent: end");
+        assert_eq!(parse_stop("43 replace", 42), None, "another session's request");
+        assert_eq!(parse_stop("", 42), None);
+        assert_eq!(parse_stop("x replace", 42), None);
     }
 
     #[test]

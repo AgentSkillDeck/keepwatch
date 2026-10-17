@@ -357,6 +357,32 @@ fn lid_end_stops_a_running_session_and_status_shows_it() {
     assert!(text(&again.stdout).contains("No lid session is running"));
 }
 
+/// Running `lid start` again replaces the session. With the lid closed, the
+/// old one must hand over without asking to suspend (an agent re-running
+/// `lid start` over SSH would otherwise suspend the laptop under itself).
+#[cfg(target_os = "linux")]
+#[test]
+fn lid_start_again_replaces_without_suspending() {
+    let lab = LidLab::new("lid-replace");
+    let first = lab.cmd(1).args(["lid", "start", "--hours", "12"]).spawn().unwrap();
+    let pid_in_lock =
+        || -> Option<u32> { std::fs::read_to_string(lab.lock()).ok()?.split_whitespace().next()?.parse().ok() };
+    wait_for("the first session", Duration::from_secs(10), || pid_in_lock() == Some(first.id()));
+    let second = lab.cmd(1).args(["lid", "start", "--hours", "12"]).spawn().unwrap();
+    let second_pid = second.id();
+    let out = finish(first, Duration::from_secs(15));
+    assert!(text(&out.stdout).contains("a new lid session replaced it"), "{}", text(&out.stdout));
+    wait_for("the second session", Duration::from_secs(10), || pid_in_lock() == Some(second_pid));
+    assert_eq!(lab.read("systemctl-args"), "", "replacing never suspends");
+    assert!(lab.log().contains(" ended replaced: "), "{}", lab.log());
+    lab.set_lid(false);
+    let end = lab.cmd(1).args(["lid", "end"]).output().unwrap();
+    assert_eq!(end.status.code(), Some(0));
+    let out = finish(second, Duration::from_secs(10));
+    assert!(text(&out.stdout).contains("Replaced the running lid session"), "{}", text(&out.stdout));
+    assert_eq!(lab.read("systemctl-args"), "", "lid open at the end: no suspend");
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn lid_start_refuses_unsafe_starts() {

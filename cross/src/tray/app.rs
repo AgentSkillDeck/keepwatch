@@ -7,7 +7,7 @@
 use crate::icon::{self, IconKind};
 use crate::{autostart, notify::Notifier};
 use keepwatch::lid::{self, EndReason, LidPlan, LidSession, LidSessionJson};
-use keepwatch::lock::{self, Kind, Owner, StopResult};
+use keepwatch::lock::{self, Kind, Owner, StopIntent, StopResult};
 use keepwatch::session::{self, AwakeEnd, AwakeMode, AwakeSession, AwakeState};
 use keepwatch::{agents, duration, procs, util};
 use ksni::blocking::TrayMethods;
@@ -157,11 +157,20 @@ impl ksni::Tray for Tray {
         let info = |label: &str| -> ksni::MenuItem<Self> {
             StandardItem { label: label.into(), enabled: false, ..Default::default() }.into()
         };
-        let mut menu: Vec<ksni::MenuItem<Self>> = if v.status.is_empty() {
-            vec![info("Sleeping normally")]
-        } else {
-            v.status.iter().map(|s| info(s)).collect()
+        // ksni numbers items by position, so every menu has the same number of
+        // rows (unused ones hidden): a click on a stale menu still hits the
+        // item the user saw.
+        let rows = |labels: Vec<&str>, count: usize| -> Vec<ksni::MenuItem<Self>> {
+            (0..count)
+                .map(|i| match labels.get(i) {
+                    Some(l) => info(l),
+                    None => StandardItem { visible: false, enabled: false, ..Default::default() }.into(),
+                })
+                .collect()
         };
+        let status: Vec<&str> =
+            if v.status.is_empty() { vec!["Sleeping normally"] } else { v.status.iter().map(String::as_str).collect() };
+        let mut menu = rows(status, STATUS_ROWS);
         menu.push(ksni::MenuItem::Separator);
         menu.push(
             SubMenu {
@@ -216,11 +225,9 @@ impl ksni::Tray for Tray {
             }
             .into(),
         );
-        let agents: Vec<ksni::MenuItem<Self>> = if v.agents.is_empty() {
-            vec![info("No agents running")]
-        } else {
-            v.agents.iter().map(|a| info(a)).collect()
-        };
+        let names: Vec<&str> =
+            if v.agents.is_empty() { vec!["No agents running"] } else { v.agents.iter().map(String::as_str).collect() };
+        let agents = rows(names, MAX_AGENT_ROWS);
         menu.push(
             SubMenu { label: format!("Agents ({})", v.agents.len()), submenu: agents, ..Default::default() }.into(),
         );
@@ -255,6 +262,8 @@ struct Controller {
 }
 
 const MAX_AGENT_ROWS: usize = 20;
+/// Status lines: the lid session and keep-awake.
+const STATUS_ROWS: usize = 2;
 
 impl Controller {
     fn sample_agents(&mut self) {
@@ -298,7 +307,7 @@ impl Controller {
             return;
         };
         // Tell the user before a suspend can happen.
-        if why != EndReason::Quit {
+        if !matches!(why, EndReason::Quit | EndReason::Replaced) {
             self.notifier.send("Lid session ended", &format!("It ended because {}.", why.describe()));
         }
         let outcome = s.finish(why);
@@ -309,7 +318,7 @@ impl Controller {
         match cmd {
             Cmd::Awake(mode) => {
                 self.end_awake(AwakeEnd::StopRequested);
-                if let StopResult::Failed(l) = lock::stop(Kind::Awake) {
+                if let StopResult::Failed(l) = lock::stop(Kind::Awake, StopIntent::Replace) {
                     self.notifier
                         .send("Couldn't keep awake", &format!("Another keepwatch (pid {}) didn't stop.", l.pid));
                     return true;
@@ -328,12 +337,12 @@ impl Controller {
                 if self.awake.is_some() {
                     self.end_awake(AwakeEnd::StopRequested);
                 } else {
-                    let _ = lock::stop(Kind::Awake);
+                    let _ = lock::stop(Kind::Awake, StopIntent::End);
                 }
             }
             Cmd::LidStart { half_hours } => {
-                self.end_lid(EndReason::StopRequested);
-                if let StopResult::Failed(l) = lock::stop(Kind::Lid) {
+                self.end_lid(EndReason::Replaced);
+                if let StopResult::Failed(l) = lock::stop(Kind::Lid, StopIntent::Replace) {
                     let msg = format!("Another lid session (pid {}) didn't stop.", l.pid);
                     self.notifier.send("Couldn't start a lid session", &msg);
                     return true;
@@ -348,7 +357,7 @@ impl Controller {
                 if self.lid.is_some() {
                     self.end_lid(EndReason::StopRequested);
                 } else {
-                    let _ = lock::stop(Kind::Lid);
+                    let _ = lock::stop(Kind::Lid, StopIntent::End);
                 }
             }
             Cmd::SetEndWhenAgentsDone(on) => self.end_when_agents_done = on,
@@ -364,13 +373,18 @@ impl Controller {
     }
 
     /// The cheap checks, every second.
-    fn check(&mut self) {
+    /// Returns whether a session ended.
+    fn check(&mut self) -> bool {
+        let mut ended = false;
         if let Some(why) = self.awake.as_mut().and_then(AwakeSession::check) {
             self.end_awake(why);
+            ended = true;
         }
         if let Some(why) = self.lid.as_mut().and_then(LidSession::check) {
             self.end_lid(why);
+            ended = true;
         }
+        ended
     }
 
     /// The rule tick, every 5 s: agents, the lid rules.
@@ -480,7 +494,11 @@ pub fn run() -> i32 {
     let mut last_rules = Instant::now();
     loop {
         let mut changed = false;
-        match rx.recv_timeout(Duration::from_secs(1)) {
+        // While this tray holds a session, check its stop file every second;
+        // otherwise wake only for the 5 s rule tick.
+        let holding = c.awake.is_some() || c.lid.is_some();
+        let wait = if holding { Duration::from_secs(1) } else { tick.saturating_sub(last_rules.elapsed()) };
+        match rx.recv_timeout(wait.max(Duration::from_millis(50))) {
             Ok(cmd) => {
                 if !c.handle(cmd) {
                     break;
@@ -490,7 +508,7 @@ pub fn run() -> i32 {
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }
-        c.check();
+        changed |= c.check();
         if last_rules.elapsed() >= tick {
             last_rules = Instant::now();
             c.rules();
