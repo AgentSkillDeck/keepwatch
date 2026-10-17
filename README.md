@@ -1,3 +1,9 @@
+**Keepwatch in 95 seconds** (narrated tour of 0.3, demo data). Click to play:
+
+<a href="https://github.com/AgentSkillDeck/keepwatch/releases/download/v0.3.0/keepwatch-tour.mp4"><img src="docs/media/tour-poster.jpg" alt="Play the Keepwatch tour video" width="720"></a>
+
+<sub>With chapters on the <a href="https://agentskilldeck.github.io/keepwatch/#tour">website</a> · Music: “Soft Corporate” by MusicLFiles, CC BY 4.0 · Voice: Supertonic 3, generated on device</sub>
+
 # Keepwatch
 
 <p align="center">
