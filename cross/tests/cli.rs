@@ -101,7 +101,9 @@ fn run_with_the_real_systemd_inhibit_or_a_clear_error() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     if out.status.code() == Some(2) {
         assert!(
-            stderr.contains("systemd-inhibit isn't installed") || stderr.contains("couldn't keep this computer awake"),
+            stderr.contains("systemd-inhibit isn't installed")
+                || stderr.contains("couldn't keep this computer awake")
+                || stderr.contains("the system refused the keep-awake lock"),
             "{stderr}"
         );
         eprintln!("skipped: no working systemd-inhibit here ({})", stderr.trim());
